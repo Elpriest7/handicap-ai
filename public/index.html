@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HandicapAI — Live Predictions</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#080c12;--surface:#0e1420;--card:#131925;--border:#1e2a3a;
+    --accent:#00e5a0;--accent2:#ff6b35;--gold:#ffc837;--blue:#2563eb;
+    --text:#e8edf5;--muted:#5a6a80;--win:#00e5a0;--lose:#ff4757;--pending:#ffc837;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min-height:100vh;overflow-x:hidden}
+  body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 80% 40% at 50% 0%,rgba(0,229,160,.06) 0%,transparent 60%),radial-gradient(ellipse 50% 30% at 90% 80%,rgba(37,99,235,.07) 0%,transparent 50%);pointer-events:none;z-index:0}
+
+  /* HEADER */
+  header{position:sticky;top:0;z-index:100;background:rgba(8,12,18,.92);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:0 16px}
+  .header-inner{max-width:480px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;height:56px}
+  .logo{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:2px;background:linear-gradient(135deg,var(--accent),#00b4d8);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  .logo span{-webkit-text-fill-color:var(--text)}
+  .header-right{display:flex;gap:8px;align-items:center}
+  .last-updated{font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace}
+  .notif-btn{width:36px;height:36px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;position:relative}
+  .notif-dot{position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--accent);border:2px solid var(--bg)}
+  .refresh-btn{width:36px;height:36px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--accent);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:15px;transition:transform .4s}
+  .refresh-btn.spinning{animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* STATS BAR */
+  .stats-bar{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 16px;position:relative;z-index:1}
+  .stats-bar-inner{max-width:480px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .stat-pill{text-align:center;padding:8px 4px;border-radius:10px;background:var(--card);border:1px solid var(--border)}
+  .stat-pill .val{font-family:'Bebas Neue',sans-serif;font-size:20px;line-height:1}
+  .val.green{color:var(--accent)}.val.gold{color:var(--gold)}.val.blue{color:#60a5fa}.val.orange{color:var(--accent2)}
+  .stat-pill .lbl{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+
+  /* TABS */
+  .tabs-wrap{padding:12px 16px 0;position:relative;z-index:1}
+  .tabs{max-width:480px;margin:0 auto;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+  .tabs::-webkit-scrollbar{display:none}
+  .tab{flex-shrink:0;padding:7px 14px;border-radius:20px;border:1px solid var(--border);background:var(--surface);color:var(--muted);font-size:12px;font-weight:500;cursor:pointer;transition:all .2s;font-family:'DM Sans',sans-serif}
+  .tab.active{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600}
+
+  /* FILTERS */
+  .filter-bar{padding:10px 16px;position:relative;z-index:1}
+  .filter-bar-inner{max-width:480px;margin:0 auto;display:flex;gap:8px;overflow-x:auto;scrollbar-width:none}
+  .filter-bar-inner::-webkit-scrollbar{display:none}
+  .filter-chip{flex-shrink:0;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:11px;cursor:pointer;display:flex;align-items:center;gap:5px;font-family:'DM Sans',sans-serif;transition:all .2s}
+  .filter-chip.on{border-color:var(--accent);color:var(--accent);background:rgba(0,229,160,.08)}
+  .filter-chip .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+
+  /* SECTION LABEL */
+  .section-label{max-width:480px;margin:0 auto 10px;display:flex;align-items:center;gap:8px;padding:0 16px}
+  .section-label .line{flex:1;height:1px;background:var(--border)}
+  .section-label span{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;white-space:nowrap}
+
+  /* MAIN */
+  main{padding:0 16px 100px;position:relative;z-index:1}
+
+  /* CARD */
+  .card{max-width:480px;margin:0 auto 12px;border-radius:16px;overflow:hidden;border:1px solid var(--border);background:var(--card);position:relative;transition:transform .15s;animation:fadeUp .35s ease both}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+  .card:active{transform:scale(.985)}
+  .card.banker{border-color:rgba(255,200,55,.4);background:linear-gradient(145deg,#161d2a,#1a1f2e)}
+  .card.banker::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--gold),#ff9f43,var(--gold));background-size:200%;animation:shimmer 2s linear infinite}
+  @keyframes shimmer{0%{background-position:0% 0}100%{background-position:200% 0}}
+
+  .card-head{padding:12px 14px 8px;display:flex;align-items:center;justify-content:space-between}
+  .league-badge{display:flex;align-items:center;gap:6px}
+  .league-flag{width:18px;height:18px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:12px}
+  .league-name{font-size:10px;color:var(--muted);font-weight:500;text-transform:uppercase;letter-spacing:.5px}
+  .card-badges{display:flex;gap:5px;align-items:center}
+  .badge{padding:3px 8px;border-radius:6px;font-size:10px;font-weight:600;font-family:'JetBrains Mono',monospace}
+  .badge.banker-badge{background:rgba(255,200,55,.15);color:var(--gold);border:1px solid rgba(255,200,55,.3)}
+  .badge.bookie{background:rgba(37,99,235,.12);color:#60a5fa;border:1px solid rgba(37,99,235,.2);font-family:'DM Sans',sans-serif;font-size:9px;font-weight:600}
+  .badge.win{background:rgba(0,229,160,.1);color:var(--win);border:1px solid rgba(0,229,160,.2)}
+  .badge.loss{background:rgba(255,71,87,.1);color:var(--lose);border:1px solid rgba(255,71,87,.2)}
+  .badge.pending{background:rgba(255,200,55,.1);color:var(--pending);border:1px solid rgba(255,200,55,.2)}
+
+  .match-body{padding:4px 14px 12px}
+  .teams{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .team{flex:1;text-align:center}
+  .team-name{font-size:13px;font-weight:600;line-height:1.3}
+  .team-form{display:flex;gap:3px;justify-content:center;margin-top:5px}
+  .form-dot{width:7px;height:7px;border-radius:50%}
+  .form-dot.W{background:var(--win)}.form-dot.D{background:var(--muted)}.form-dot.L{background:var(--lose)}
+  .vs-block{text-align:center;flex-shrink:0;padding:0 10px}
+  .vs-text{font-family:'Bebas Neue',sans-serif;font-size:22px;color:var(--muted);line-height:1}
+  .match-time{font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:2px}
+
+  .pick-row{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between}
+  .pick-left{display:flex;flex-direction:column;gap:3px}
+  .pick-label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px}
+  .pick-value{font-family:'Bebas Neue',sans-serif;font-size:20px;color:var(--accent);letter-spacing:1px;line-height:1}
+  .card.banker .pick-value{color:var(--gold)}
+  .pick-right{text-align:right}
+  .prob-ring{width:52px;height:52px;position:relative;display:flex;align-items:center;justify-content:center}
+  .prob-ring svg{position:absolute;top:0;left:0;transform:rotate(-90deg)}
+  .prob-inner{text-align:center;position:relative;z-index:1}
+  .prob-num{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--text);line-height:1}
+  .prob-pct{font-size:8px;color:var(--muted)}
+
+  .card-footer{padding:8px 14px 12px;display:flex;gap:6px;flex-wrap:wrap}
+  .insight-tag{padding:4px 8px;border-radius:6px;font-size:10px;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--muted)}
+  .insight-tag.hot{background:rgba(255,107,53,.08);color:var(--accent2);border-color:rgba(255,107,53,.2)}
+
+  /* SKELETON LOADER */
+  .skeleton{background:var(--card);border:1px solid var(--border);border-radius:16px;height:160px;max-width:480px;margin:0 auto 12px;position:relative;overflow:hidden}
+  .skeleton::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,.04) 50%,transparent 100%);animation:skeletonShimmer 1.5s infinite}
+  @keyframes skeletonShimmer{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+
+  /* EMPTY STATE */
+  .empty-state{max-width:480px;margin:40px auto;text-align:center;padding:32px 20px}
+  .empty-icon{font-size:48px;margin-bottom:16px}
+  .empty-title{font-family:'Bebas Neue',sans-serif;font-size:24px;color:var(--muted);letter-spacing:1px}
+  .empty-sub{font-size:13px;color:var(--muted);margin-top:8px;line-height:1.5}
+  .trigger-btn{margin-top:20px;padding:12px 24px;border-radius:12px;background:var(--accent);color:#000;border:none;font-weight:700;font-size:14px;cursor:pointer;font-family:'DM Sans',sans-serif}
+
+  /* ANALYTICS */
+  .analytics-panel{max-width:480px;margin:0 auto;display:none}
+  .analytics-panel.active{display:block}
+  .ana-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .ana-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px}
+  .ana-title{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:10px}
+  .ana-big{font-family:'Bebas Neue',sans-serif;font-size:36px;color:var(--accent);line-height:1}
+  .ana-sub{font-size:11px;color:var(--muted);margin-top:3px}
+  .bar-chart{margin-top:8px}
+  .bar-row{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+  .bar-label{font-size:10px;color:var(--muted);width:70px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar-track{flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden}
+  .bar-fill{height:100%;border-radius:3px;background:var(--accent);transition:width 1s ease}
+  .bar-val{font-size:10px;color:var(--text);font-family:'JetBrains Mono',monospace;width:32px;text-align:right;flex-shrink:0}
+
+  /* HISTORY */
+  .history-panel{display:none}
+  .history-panel.active{display:block}
+  .history-item{max-width:480px;margin:0 auto 8px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:10px;animation:fadeUp .3s ease}
+  .history-result{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0}
+  .history-result.win{background:rgba(0,229,160,.12);color:var(--win)}
+  .history-result.loss{background:rgba(255,71,87,.12);color:var(--lose)}
+  .history-info{flex:1;min-width:0}
+  .history-match{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .history-sub{font-size:10px;color:var(--muted);margin-top:2px}
+  .history-pick{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--accent);text-align:right;flex-shrink:0}
+
+  /* TOAST */
+  .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface);border:1px solid var(--accent);border-radius:14px;padding:12px 18px;display:flex;align-items:center;gap:10px;font-size:13px;opacity:0;transition:all .3s ease;z-index:200;max-width:calc(100vw - 32px);box-shadow:0 8px 32px rgba(0,0,0,.4)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  /* BOTTOM NAV */
+  .bottom-nav{position:fixed;bottom:0;left:0;right:0;height:64px;background:rgba(14,20,32,.95);backdrop-filter:blur(20px);border-top:1px solid var(--border);display:flex;z-index:100}
+  .nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;color:var(--muted);transition:color .2s;border:none;background:none}
+  .nav-item.active{color:var(--accent)}
+  .nav-icon{font-size:20px}.nav-label{font-size:10px;font-weight:500;font-family:'DM Sans',sans-serif}
+
+  /* CONFIG MODAL */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:300;display:none;align-items:flex-end;justify-content:center}
+  .modal-overlay.open{display:flex}
+  .modal{background:var(--surface);border:1px solid var(--border);border-radius:20px 20px 0 0;padding:24px 20px 40px;width:100%;max-width:480px}
+  .modal-title{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:1px;margin-bottom:16px}
+  .modal label{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;margin-top:14px}
+  .modal input{width:100%;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-family:'JetBrains Mono',monospace;outline:none}
+  .modal input:focus{border-color:var(--accent)}
+  .modal-save{width:100%;margin-top:20px;padding:13px;border-radius:12px;background:var(--accent);color:#000;border:none;font-weight:700;font-size:15px;cursor:pointer;font-family:'DM Sans',sans-serif}
+  .modal-close{position:absolute;top:16px;right:20px;font-size:20px;cursor:pointer;color:var(--muted);background:none;border:none}
+  .api-status{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:4px 10px;border-radius:20px;margin-top:6px}
+  .api-status.ok{background:rgba(0,229,160,.1);color:var(--accent)}
+  .api-status.err{background:rgba(255,71,87,.1);color:var(--lose)}
+  .api-status.none{background:rgba(90,106,128,.1);color:var(--muted)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="logo">Handicap<span>AI</span></div>
+    <div class="header-right">
+      <span class="last-updated" id="last-updated">--:--</span>
+      <button class="refresh-btn" id="refresh-btn" onclick="loadPredictions(true)" title="Refresh">↻</button>
+      <button class="notif-btn" onclick="showToast('🔔 Notifications enabled!')">🔔<div class="notif-dot" id="notif-dot" style="display:none"></div></button>
+      <button class="notif-btn" onclick="openConfig()" title="Settings">⚙️</button>
+    </div>
+  </div>
+</header>
+
+<div class="stats-bar">
+  <div class="stats-bar-inner">
+    <div class="stat-pill"><div class="val green" id="stat-today">--</div><div class="lbl">Today</div></div>
+    <div class="stat-pill"><div class="val gold" id="stat-bankers">--</div><div class="lbl">Bankers</div></div>
+    <div class="stat-pill"><div class="val blue" id="stat-winrate">--%</div><div class="lbl">Win Rate</div></div>
+    <div class="stat-pill"><div class="val orange" id="stat-avgprob">--%</div><div class="lbl">Avg Prob</div></div>
+  </div>
+</div>
+
+<div class="tabs-wrap">
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('today',this)">Today</button>
+    <button class="tab" onclick="switchTab('bankers',this)">⭐ Bankers</button>
+    <button class="tab" onclick="switchTab('analytics',this)">Analytics</button>
+    <button class="tab" onclick="switchTab('history',this)">History</button>
+  </div>
+</div>
+
+<div class="filter-bar">
+  <div class="filter-bar-inner" id="league-filters">
+    <button class="filter-chip on" data-league="all" onclick="setLeague('all',this)"><div class="dot"></div>All</button>
+    <button class="filter-chip" data-league="Premier League" onclick="setLeague('Premier League',this)"><div class="dot"></div>PL 🏴󠁧󠁢󠁥󠁮󠁧󠁿</button>
+    <button class="filter-chip" data-league="La Liga" onclick="setLeague('La Liga',this)"><div class="dot"></div>LaLiga 🇪🇸</button>
+    <button class="filter-chip" data-league="Serie A" onclick="setLeague('Serie A',this)"><div class="dot"></div>Serie A 🇮🇹</button>
+    <button class="filter-chip" data-league="Bundesliga" onclick="setLeague('Bundesliga',this)"><div class="dot"></div>Bund. 🇩🇪</button>
+    <button class="filter-chip" data-league="Ligue 1" onclick="setLeague('Ligue 1',this)"><div class="dot"></div>Ligue1 🇫🇷</button>
+    <button class="filter-chip" data-prob="80" onclick="setMinProb(80,this)"><div class="dot"></div>80%+</button>
+  </div>
+</div>
+
+<main>
+  <div id="tab-today">
+    <div id="predictions-container"></div>
+  </div>
+
+  <div id="tab-bankers" style="display:none">
+    <div id="bankers-container"></div>
+  </div>
+
+  <div id="tab-analytics" class="analytics-panel">
+    <div class="ana-grid">
+      <div class="ana-card">
+        <div class="ana-title">Win Rate</div>
+        <div class="ana-big" id="ana-winrate">--</div>
+        <div class="ana-sub">All Time</div>
+      </div>
+      <div class="ana-card">
+        <div class="ana-title">Banker Rate</div>
+        <div class="ana-big" style="color:var(--gold)" id="ana-bankerrate">--</div>
+        <div class="ana-sub" id="ana-bankertotal">-- bankers</div>
+      </div>
+    </div>
+    <div class="ana-card" style="margin-top:10px">
+      <div class="ana-title">Win Rate by League</div>
+      <div class="bar-chart" id="ana-leagues"></div>
+    </div>
+    <div class="ana-grid" style="margin-top:10px">
+      <div class="ana-card">
+        <div class="ana-title">Total Picks</div>
+        <div class="ana-big" style="color:#60a5fa" id="ana-total">--</div>
+        <div class="ana-sub">All Time</div>
+      </div>
+      <div class="ana-card">
+        <div class="ana-title">Streak</div>
+        <div class="ana-big" style="color:var(--accent2)" id="ana-streak">--</div>
+        <div class="ana-sub" id="ana-streaktype">Current</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-history" class="history-panel">
+    <div id="history-container"></div>
+  </div>
+</main>
+
+<div class="toast" id="toast">
+  <div class="toast-icon" id="toast-icon">✅</div>
+  <div id="toast-msg">Done!</div>
+</div>
+
+<div class="bottom-nav">
+  <button class="nav-item active" onclick="switchNav(this,'today')"><div class="nav-icon">⚽</div><div class="nav-label">Picks</div></button>
+  <button class="nav-item" onclick="switchNav(this,'bankers')"><div class="nav-icon">⭐</div><div class="nav-label">Bankers</div></button>
+  <button class="nav-item" onclick="switchNav(this,'analytics')"><div class="nav-icon">📊</div><div class="nav-label">Analytics</div></button>
+  <button class="nav-item" onclick="switchNav(this,'history')"><div class="nav-icon">📋</div><div class="nav-label">History</div></button>
+</div>
+
+<!-- CONFIG MODAL -->
+<div class="modal-overlay" id="modal-overlay" onclick="closeConfig(event)">
+  <div class="modal" style="position:relative">
+    <button class="modal-close" onclick="closeConfig()">✕</button>
+    <div class="modal-title">⚙️ API Setup</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Connect your APIs for live data</div>
+
+    <label>Backend URL</label>
+    <input id="cfg-backend" type="url" placeholder="http://localhost:3000" value="http://localhost:3000">
+    <div id="backend-status" class="api-status none">● Not tested</div>
+
+    <label>The Odds API Key <a href="https://the-odds-api.com" target="_blank" style="color:var(--accent);font-size:10px">Get free key →</a></label>
+    <input id="cfg-oddskey" type="text" placeholder="Enter your Odds API key">
+
+    <label>Anthropic API Key</label>
+    <input id="cfg-anthropic" type="password" placeholder="sk-ant-...">
+
+    <button class="modal-save" onclick="saveConfig()">Save & Test Connection</button>
+  </div>
+</div>
+
+<script>
+// ── STATE ──────────────────────────────────────────────────
+let state = {
+  tab: 'today',
+  league: 'all',
+  minProb: 70,
+  bankersOnly: false,
+  backendUrl: localStorage.getItem('backendUrl') || 'http://localhost:3000',
+  predictions: [],
+  loading: false,
+};
+
+// ── INIT ───────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', async () => {
+  document.getElementById('cfg-backend').value = state.backendUrl;
+  await loadStats();
+  await loadPredictions();
+  // Check for bankers to show notification dot
+  const bankers = state.predictions.filter(p => p.is_banker);
+  if (bankers.length > 0) {
+    document.getElementById('notif-dot').style.display = 'block';
+    setTimeout(() => showToast(`⭐ ${bankers.length} Banker picks today!`), 1500);
+  }
+});
+
+// ── API HELPERS ────────────────────────────────────────────
+async function api(path) {
+  const res = await fetch(`${state.backendUrl}${path}`);
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+// ── LOAD PREDICTIONS ───────────────────────────────────────
+async function loadPredictions(manual = false) {
+  if (state.loading) return;
+  state.loading = true;
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+
+  const container = document.getElementById('predictions-container');
+  const bankersContainer = document.getElementById('bankers-container');
+
+  // Show skeletons
+  container.innerHTML = [1,2,3,4].map(()=>`<div class="skeleton"></div>`).join('');
+
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const qs = new URLSearchParams({ date: today, min_prob: state.minProb, league: state.league });
+    const data = await api(`/api/predictions?${qs}`);
+    state.predictions = data.predictions || [];
+
+    renderPredictions(state.predictions, container, false);
+    renderPredictions(state.predictions.filter(p => p.is_banker), bankersContainer, true);
+
+    document.getElementById('last-updated').textContent = 'Live · ' + new Date().toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'});
+    if (manual) showToast('✅ Predictions refreshed!');
+  } catch (err) {
+    // Demo mode: show sample data when no backend
+    state.predictions = getDemoData();
+    renderPredictions(state.predictions, container, false);
+    renderPredictions(state.predictions.filter(p => p.is_banker), bankersContainer, true);
+    document.getElementById('last-updated').textContent = 'Demo Mode';
+    if (manual) showToast('⚠️ Using demo data. Set up API keys.');
+  } finally {
+    state.loading = false;
+    btn.classList.remove('spinning');
+  }
+
+  await loadStats();
+}
+
+// ── RENDER CARDS ───────────────────────────────────────────
+function renderPredictions(preds, container, bankersSection) {
+  if (!preds.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">${bankersSection ? '⭐' : '⚽'}</div>
+        <div class="empty-title">${bankersSection ? 'No Banker Picks Yet' : 'No Predictions Yet'}</div>
+        <div class="empty-sub">Daily fetch runs at 7:00 AM.<br>Tap below to trigger manually.</div>
+        <button class="trigger-btn" onclick="triggerFetch()">🤖 Fetch Today's Predictions</button>
+      </div>`;
+    return;
+  }
+
+  const bankers = preds.filter(p => p.is_banker);
+  const regulars = preds.filter(p => !p.is_banker);
+  let html = '';
+
+  if (bankers.length && !bankersSection) {
+    html += `<div class="section-label"><div class="line"></div><span>⭐ Banker Picks</span><div class="line"></div></div>`;
+    html += bankers.map(p => cardHTML(p)).join('');
+    html += `<div class="section-label"><div class="line"></div><span>High Probability Picks</span><div class="line"></div></div>`;
+    html += regulars.map(p => cardHTML(p)).join('');
+  } else {
+    if (bankersSection) {
+      html += `<div class="section-label"><div class="line"></div><span>⭐ Today's Bankers</span><div class="line"></div></div>`;
+    }
+    html += preds.map(p => cardHTML(p)).join('');
+  }
+
+  container.innerHTML = html;
+}
+
+function cardHTML(p) {
+  const insights = Array.isArray(p.insights) ? p.insights : JSON.parse(p.insights || '[]');
+  const homeForm = (p.home_form || 'WWDLW').split('');
+  const awayForm = (p.away_form || 'LWLLL').split('');
+  const prob = p.probability || 75;
+  const circumference = 138.2;
+  const offset = circumference - (prob / 100) * circumference;
+  const color = p.is_banker ? '#ffc837' : '#00e5a0';
+  const time = p.date ? new Date(p.date + 'T' + (p.match_time || '15:00')).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}) : '15:00';
+  const statusBadge = p.status === 'win'
+    ? `<span class="badge win">WIN ✓</span>`
+    : p.status === 'loss'
+    ? `<span class="badge loss">LOSS ✗</span>`
+    : `<span class="badge pending">PENDING</span>`;
+
+  const resultLine = p.status !== 'pending' && p.home_score !== null
+    ? `${p.home_score}-${p.away_score} ${p.status === 'win' ? '✓' : '✗'}`
+    : `${p.win_condition || 'Win by ' + p.handicap?.replace('H','') + '+ goals'}`;
+
+  const insightTags = insights.slice(0,3).map((ins, i) =>
+    `<span class="insight-tag ${i===0?'hot':''}">${ins}</span>`
+  ).join('');
+
+  const bookieName = (p.bookmaker || 'bet9ja').replace('onexbet','1xBet').replace('bet9ja','Bet9ja').replace('betway','Betway');
+
+  return `
+  <div class="card ${p.is_banker ? 'banker' : ''}">
+    <div class="card-head">
+      <div class="league-badge">
+        <div class="league-flag">${p.league_flag || '⚽'}</div>
+        <span class="league-name">${p.league}</span>
+      </div>
+      <div class="card-badges">
+        <span class="badge bookie">${bookieName}</span>
+        ${p.is_banker ? `<span class="badge banker-badge">⭐ BANKER</span>` : ''}
+        ${statusBadge}
+      </div>
+    </div>
+    <div class="match-body">
+      <div class="teams">
+        <div class="team">
+          <div class="team-name">${p.home_team}</div>
+          <div class="team-form">${homeForm.map(f=>`<div class="form-dot ${f}"></div>`).join('')}</div>
+        </div>
+        <div class="vs-block">
+          <div class="vs-text">VS</div>
+          <div class="match-time">${time}</div>
+        </div>
+        <div class="team">
+          <div class="team-name">${p.away_team}</div>
+          <div class="team-form">${awayForm.map(f=>`<div class="form-dot ${f}"></div>`).join('')}</div>
+        </div>
+      </div>
+      <div class="pick-row">
+        <div class="pick-left">
+          <div class="pick-label">Selected Pick</div>
+          <div class="pick-value">${p.handicap_label || p.favorite + ' ' + p.handicap}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">${resultLine}</div>
+        </div>
+        <div class="pick-right">
+          <div class="prob-ring">
+            <svg width="52" height="52" viewBox="0 0 52 52">
+              <circle cx="26" cy="26" r="22" fill="none" stroke="#1e2a3a" stroke-width="4"/>
+              <circle cx="26" cy="26" r="22" fill="none" stroke="${color}" stroke-width="4" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" stroke-linecap="round"/>
+            </svg>
+            <div class="prob-inner">
+              <div class="prob-num">${prob}%</div>
+              <div class="prob-pct">PROB</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-footer">
+      ${insightTags}
+      ${p.h2h_summary ? `<span class="insight-tag">${p.h2h_summary}</span>` : ''}
+      ${p.odds ? `<span class="insight-tag">Odds: ${Number(p.odds).toFixed(2)}</span>` : ''}
+    </div>
+  </div>`;
+}
+
+// ── LOAD STATS ─────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const s = await api('/api/stats');
+    document.getElementById('stat-today').textContent = s.today_picks;
+    document.getElementById('stat-bankers').textContent = s.today_bankers;
+    document.getElementById('stat-winrate').textContent = s.win_rate + '%';
+    document.getElementById('stat-avgprob').textContent = s.avg_prob + '%';
+    document.getElementById('ana-total').textContent = s.total_predictions;
+    document.getElementById('ana-winrate').textContent = s.win_rate + '%';
+  } catch {}
+}
+
+// ── LOAD ANALYTICS ─────────────────────────────────────────
+async function loadAnalytics() {
+  try {
+    const data = await api('/api/analytics');
+    document.getElementById('ana-bankerrate').textContent = (data.banker_rate || 0) + '%';
+    document.getElementById('ana-bankertotal').textContent = (data.banker_total || 0) + ' bankers';
+    document.getElementById('ana-streak').textContent = (data.streak?.count || 0) + (data.streak?.type === 'win' ? 'W' : 'L');
+    document.getElementById('ana-streaktype').textContent = 'Current Streak';
+
+    const leagueEl = document.getElementById('ana-leagues');
+    if (data.by_league?.length) {
+      leagueEl.innerHTML = data.by_league.map(l => `
+        <div class="bar-row">
+          <div class="bar-label">${l.league_flag || ''} ${l.league}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${l.win_rate}%"></div></div>
+          <div class="bar-val">${l.win_rate}%</div>
+        </div>`).join('');
+    } else {
+      leagueEl.innerHTML = '<div style="color:var(--muted);font-size:12px;text-align:center;padding:16px">No data yet</div>';
+    }
+  } catch {
+    document.getElementById('ana-leagues').innerHTML = '<div style="color:var(--muted);font-size:12px;text-align:center;padding:16px">Connect backend to see analytics</div>';
+  }
+}
+
+// ── LOAD HISTORY ───────────────────────────────────────────
+async function loadHistory() {
+  const el = document.getElementById('history-container');
+  el.innerHTML = `<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>`;
+  try {
+    const data = await api('/api/history?limit=30');
+    if (!data.history?.length) {
+      el.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No History Yet</div><div class="empty-sub">Results appear here after matches complete.</div></div>`;
+      return;
+    }
+    el.innerHTML = data.history.map(p => `
+      <div class="history-item">
+        <div class="history-result ${p.status}">${p.status === 'win' ? 'W' : 'L'}</div>
+        <div class="history-info">
+          <div class="history-match">${p.home_team} vs ${p.away_team}</div>
+          <div class="history-sub">${p.date} · ${p.league}${p.is_banker ? ' · ⭐ Banker' : ''}</div>
+        </div>
+        <div class="history-pick">${p.handicap_label}<br><span style="color:var(--muted);font-size:9px">${p.probability}% prob</span></div>
+      </div>`).join('');
+  } catch {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No History</div><div class="empty-sub">Connect backend to see history.</div></div>`;
+  }
+}
+
+// ── TRIGGER FETCH ──────────────────────────────────────────
+async function triggerFetch() {
+  showToast('🤖 Fetching predictions... this takes ~2 min');
+  try {
+    await fetch(`${state.backendUrl}/api/trigger`, { method: 'POST' });
+    setTimeout(loadPredictions, 5000);
+  } catch {
+    showToast('⚠️ Cannot reach backend. Set up server first.');
+  }
+}
+
+// ── TABS & FILTERS ─────────────────────────────────────────
+function switchTab(name, btn) {
+  state.tab = name;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  ['today','bankers','analytics','history'].forEach(id => {
+    const el = document.getElementById('tab-' + id);
+    if (!el) return;
+    el.style.display = id === name ? '' : 'none';
+    el.classList.toggle('active', id === name);
+  });
+  if (name === 'analytics') loadAnalytics();
+  if (name === 'history') loadHistory();
+}
+
+function switchNav(btn, name) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  btn.classList.add('active');
+  const tabBtn = Array.from(document.querySelectorAll('.tab')).find(t => t.getAttribute('onclick')?.includes(`'${name}'`));
+  if (tabBtn) switchTab(name, tabBtn);
+}
+
+function setLeague(league, chip) {
+  state.league = league;
+  document.querySelectorAll('[data-league]').forEach(c => c.classList.remove('on'));
+  chip.classList.add('on');
+  loadPredictions();
+}
+
+function setMinProb(prob, chip) {
+  state.minProb = chip.classList.contains('on') ? 70 : prob;
+  chip.classList.toggle('on');
+  loadPredictions();
+}
+
+// ── CONFIG MODAL ───────────────────────────────────────────
+function openConfig() {
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function closeConfig(e) {
+  if (!e || e.target === document.getElementById('modal-overlay')) {
+    document.getElementById('modal-overlay').classList.remove('open');
+  }
+}
+
+async function saveConfig() {
+  const backendUrl = document.getElementById('cfg-backend').value.trim().replace(/\/$/, '');
+  state.backendUrl = backendUrl;
+  localStorage.setItem('backendUrl', backendUrl);
+
+  const statusEl = document.getElementById('backend-status');
+  statusEl.className = 'api-status none';
+  statusEl.textContent = '● Testing...';
+
+  try {
+    const res = await fetch(`${backendUrl}/api/stats`);
+    if (res.ok) {
+      statusEl.className = 'api-status ok';
+      statusEl.textContent = '● Connected ✓';
+      showToast('✅ Backend connected!');
+      closeConfig();
+      loadPredictions();
+    } else throw new Error();
+  } catch {
+    statusEl.className = 'api-status err';
+    statusEl.textContent = '● Cannot reach server';
+    showToast('❌ Cannot connect. Is the server running?');
+  }
+}
+
+// ── TOAST ──────────────────────────────────────────────────
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  document.getElementById('toast-msg').textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+// ── DEMO DATA ──────────────────────────────────────────────
+function getDemoData() {
+  return [
+    { id:1, match_id:'demo1', date:'2026-03-19', league:'Premier League', league_flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿', home_team:'Manchester City', away_team:'Wolverhampton', favorite:'Manchester City', handicap:'H2', handicap_label:'Man City H2', win_condition:'Win by 2+ goals', probability:87, is_banker:1, bookmaker:'bet9ja', odds:1.72, status:'pending', home_form:'WWWDW', away_form:'LLDLL', h2h_summary:'H2H 8W-1D-1L', insights:['🔥 Form Dominant','Away Side Weak','Last 5 Home: 5W'], match_time:'20:00' },
+    { id:2, match_id:'demo2', date:'2026-03-19', league:'La Liga', league_flag:'🇪🇸', home_team:'Real Madrid', away_team:'Las Palmas', favorite:'Real Madrid', handicap:'H2', handicap_label:'Real Madrid H2', win_condition:'Win by 2+ goals', probability:85, is_banker:1, bookmaker:'onexbet', odds:1.95, status:'pending', home_form:'WWWWD', away_form:'LLLLL', h2h_summary:'H2H 7W-2D-1L', insights:['🔥 Home Fortress','Avg 3.2 Goals','Las Palmas Leaky'], match_time:'18:30' },
+    { id:3, match_id:'demo3', date:'2026-03-19', league:'Bundesliga', league_flag:'🇩🇪', home_team:'Bayern Munich', away_team:'Bochum', favorite:'Bayern Munich', handicap:'H1', handicap_label:'Bayern H1', win_condition:'Win by 1+ goal', probability:81, is_banker:0, bookmaker:'betway', odds:1.80, status:'pending', home_form:'WWDWW', away_form:'LLLLL', h2h_summary:'H2H 9W-1L', insights:['📈 7W Streak','Defense Weak','Top Scorer Active'], match_time:'15:30' },
+    { id:4, match_id:'demo4', date:'2026-03-19', league:'Serie A', league_flag:'🇮🇹', home_team:'Inter Milan', away_team:'Monza', favorite:'Inter Milan', handicap:'H1', handicap_label:'Inter H1', win_condition:'Win by 1+ goal', probability:84, is_banker:0, bookmaker:'onexbet', odds:1.75, status:'win', home_score:3, away_score:0, home_form:'WWWWW', away_form:'LLLD', h2h_summary:'H2H 6-2 Inter', insights:['Series Dominance','Monza No Goals','Strong Midfield'], match_time:'13:00' },
+    { id:5, match_id:'demo5', date:'2026-03-19', league:'Ligue 1', league_flag:'🇫🇷', home_team:'PSG', away_team:'Rennes', favorite:'PSG', handicap:'H2', handicap_label:'PSG H2', win_condition:'Win by 2+ goals', probability:75, is_banker:0, bookmaker:'bet9ja', odds:1.65, status:'loss', home_score:1, away_score:1, home_form:'WWDWL', away_form:'DWDLW', h2h_summary:'PSG 5W last 8', insights:['Travel Fatigue','Rennes Stubborn','Draw Risk'], match_time:'21:00' },
+    { id:6, match_id:'demo6', date:'2026-03-19', league:'Premier League', league_flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿', home_team:'Arsenal', away_team:'Ipswich', favorite:'Arsenal', handicap:'H2', handicap_label:'Arsenal H2', win_condition:'Win by 2+ goals', probability:83, is_banker:1, bookmaker:'betway', odds:2.10, status:'pending', home_form:'WWWWD', away_form:'LLLLL', h2h_summary:'Arsenal 6W streak', insights:['🔥 Home Dominant','Ipswich 0 Away W','Top Scorer Fit'], match_time:'17:00' },
+  ];
+}
+</script>
+</body>
+</html>
