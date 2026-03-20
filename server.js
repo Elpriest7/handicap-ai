@@ -14,7 +14,6 @@ const CONFIG = {
   ODDS_API_KEY: process.env.ODDS_API_KEY || '',
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
   MIN_PROBABILITY: 70,
-  BANKER_THRESHOLD: 82,
   PORT: process.env.PORT || 3000,
   LEAGUES: [
     { key: 'soccer_epl', name: 'Premier League', flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
@@ -23,7 +22,6 @@ const CONFIG = {
     { key: 'soccer_germany_bundesliga', name: 'Bundesliga', flag: '🇩🇪' },
     { key: 'soccer_france_ligue_one', name: 'Ligue 1', flag: '🇫🇷' },
   ],
-  BOOKMAKERS: ['bet9ja', 'onexbet', 'betway'],
 };
 
 const DB_PATH = path.join('/tmp', 'handicap_db.json');
@@ -39,32 +37,48 @@ function writeDB(data) {
   try { fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2)); } catch (e) { console.error('DB write error:', e.message); }
 }
 
+// Fetch matches - no bookmaker filter so we get ALL available matches
 async function fetchOddsForLeague(leagueKey) {
   try {
     if (!CONFIG.ODDS_API_KEY) return [];
-    const url = `https://api.the-odds-api.com/v4/sports/${leagueKey}/odds/?apiKey=${CONFIG.ODDS_API_KEY}&regions=eu&markets=h2h&oddsFormat=decimal&bookmakers=${CONFIG.BOOKMAKERS.join(',')}`;
+    const url = `https://api.the-odds-api.com/v4/sports/${leagueKey}/odds/?apiKey=${CONFIG.ODDS_API_KEY}&regions=eu,uk,us&markets=h2h&oddsFormat=decimal`;
+    console.log(`[Odds] Fetching ${leagueKey}...`);
     const res = await fetch(url);
-    if (!res.ok) throw new Error(`Odds API ${res.status}`);
-    return await res.json();
-  } catch (err) { console.error(`[OddsAPI] ${leagueKey}:`, err.message); return []; }
+    if (!res.ok) {
+      const txt = await res.text();
+      console.error(`[Odds] ${leagueKey} error ${res.status}:`, txt);
+      return [];
+    }
+    const data = await res.json();
+    console.log(`[Odds] ${leagueKey}: ${data.length} matches found`);
+    return data;
+  } catch (err) {
+    console.error(`[OddsAPI] ${leagueKey}:`, err.message);
+    return [];
+  }
 }
 
 async function analyzeMatchWithGemini(match, leagueMeta) {
   if (!CONFIG.GEMINI_API_KEY) return null;
+
+  // Get best available bookmaker from the match
+  const bookmaker = match.bookmakers?.[0]?.key || 'bet9ja';
+  const bookmakerTitle = match.bookmakers?.[0]?.title || 'Bet9ja';
+
   const prompt = `You are a football European Handicap betting analyst.
 Match: ${match.home_team} vs ${match.away_team}
 League: ${leagueMeta.name}
 Date: ${match.commence_time}
 
-Analyze this match and select the best European Handicap pick for the FAVORITE team.
+Analyze and select the best European Handicap pick for the FAVORITE team.
 H1 = favorite wins by 1+ goals
-H2 = favorite wins by 2+ goals  
+H2 = favorite wins by 2+ goals
 H3 = favorite wins by 3+ goals
 
-Only return a pick if probability is 70% or higher, otherwise set probability to null.
+Only set probability if 70%+, otherwise null.
 
-Respond ONLY with valid JSON, no markdown, no explanation:
-{"favorite":"exact team name here","handicap":"H1","win_condition":"Win by 1+ goals","probability":75,"is_banker":false,"home_form":"WWDLW","away_form":"LWLLD","h2h_summary":"H2H 5W-2D-3L","insights":["tag1","tag2","tag3"],"bookmaker":"bet9ja","odds":1.75}`;
+Respond ONLY with valid JSON no markdown:
+{"favorite":"exact team name","handicap":"H1","win_condition":"Win by 1+ goals","probability":75,"is_banker":false,"home_form":"WWDLW","away_form":"LWLLD","h2h_summary":"H2H 5W-2D-3L","insights":["tag1","tag2","tag3"],"bookmaker":"${bookmakerTitle}","odds":1.75}`;
 
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${CONFIG.GEMINI_API_KEY}`;
@@ -79,42 +93,68 @@ Respond ONLY with valid JSON, no markdown, no explanation:
     const data = await res.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const clean = text.replace(/```json|```/g, '').trim();
-    return JSON.parse(clean);
-  } catch (err) { console.error('[Gemini]', match.home_team, ':', err.message); return null; }
+    const parsed = JSON.parse(clean);
+    console.log(`[Gemini] ${match.home_team} vs ${match.away_team}: ${parsed.favorite} ${parsed.handicap} ${parsed.probability}%`);
+    return parsed;
+  } catch (err) {
+    console.error('[Gemini]', match.home_team, ':', err.message);
+    return null;
+  }
 }
 
 async function runDailyUpdate() {
   console.log('[CRON] Starting daily update...');
   const db = readDB();
   let added = 0;
+  const twoDaysLater = new Date(Date.now() + 86400000 * 2).toISOString().split('T')[0];
+
   for (const league of CONFIG.LEAGUES) {
     const matches = await fetchOddsForLeague(league.key);
     for (const match of matches) {
       const matchDate = new Date(match.commence_time).toISOString().split('T')[0];
-      if (matchDate > new Date(Date.now() + 86400000 * 2).toISOString().split('T')[0]) continue;
-      if (db.predictions.find(p => p.match_id === match.id)) continue;
+      if (matchDate > twoDaysLater) continue;
+      if (db.predictions.find(p => p.match_id === match.id)) {
+        console.log(`[Skip] Already have ${match.home_team} vs ${match.away_team}`);
+        continue;
+      }
       const analysis = await analyzeMatchWithGemini(match, league);
-      if (!analysis || !analysis.probability || analysis.probability < CONFIG.MIN_PROBABILITY) continue;
+      if (!analysis || !analysis.probability || analysis.probability < CONFIG.MIN_PROBABILITY) {
+        console.log(`[Skip] Low prob or no analysis for ${match.home_team} vs ${match.away_team}`);
+        continue;
+      }
       db.predictions.push({
-        id: Date.now() + Math.random(), match_id: match.id, date: matchDate,
-        league: league.name, league_flag: league.flag,
-        home_team: match.home_team, away_team: match.away_team,
-        favorite: analysis.favorite, handicap: analysis.handicap,
+        id: Date.now() + Math.random(),
+        match_id: match.id,
+        date: matchDate,
+        league: league.name,
+        league_flag: league.flag,
+        home_team: match.home_team,
+        away_team: match.away_team,
+        favorite: analysis.favorite,
+        handicap: analysis.handicap,
         handicap_label: `${analysis.favorite} ${analysis.handicap}`,
-        win_condition: analysis.win_condition, probability: analysis.probability,
-        is_banker: analysis.is_banker ? 1 : 0, bookmaker: analysis.bookmaker || 'bet9ja',
-        odds: analysis.odds || 1.75, status: 'pending', home_score: null, away_score: null,
-        home_form: analysis.home_form || 'WWDLW', away_form: analysis.away_form || 'LWLLL',
-        h2h_summary: analysis.h2h_summary || '', insights: analysis.insights || [],
+        win_condition: analysis.win_condition,
+        probability: analysis.probability,
+        is_banker: analysis.probability >= 82 ? 1 : 0,
+        bookmaker: analysis.bookmaker || 'Bet9ja',
+        odds: analysis.odds || 1.75,
+        status: 'pending',
+        home_score: null,
+        away_score: null,
+        home_form: analysis.home_form || 'WWDLW',
+        away_form: analysis.away_form || 'LWLLL',
+        h2h_summary: analysis.h2h_summary || '',
+        insights: analysis.insights || [],
         match_time: new Date(match.commence_time).toTimeString().slice(0, 5),
         created_at: new Date().toISOString(),
       });
       added++;
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 800));
     }
   }
   writeDB(db);
-  console.log(`[CRON] Done. Added ${added} predictions.`);
+  console.log(`[CRON] Done. Added ${added} new predictions.`);
+  return added;
 }
 
 cron.schedule('0 7 * * *', runDailyUpdate);
@@ -170,8 +210,13 @@ app.get('/api/analytics', (req, res) => {
   res.json({ by_league: byLeague, streak: { count: streak, type: streakType }, banker_rate: bankers.length > 0 ? Math.round((bankerWins / bankers.length) * 100) : 0, banker_total: bankers.length });
 });
 
-app.post('/api/trigger', (req, res) => { res.json({ success: true, message: 'triggered' }); runDailyUpdate(); });
+app.post('/api/trigger', async (req, res) => {
+  console.log('[Trigger] Manual fetch triggered');
+  const added = await runDailyUpdate();
+  res.json({ success: true, message: `Fetch complete. Added ${added} predictions.` });
+});
+
 app.get('/api/leagues', (req, res) => res.json(CONFIG.LEAGUES));
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
 app.listen(CONFIG.PORT, () => console.log(`🚀 HandicapAI running on port ${CONFIG.PORT}`));
