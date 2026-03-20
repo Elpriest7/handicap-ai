@@ -12,7 +12,7 @@ app.use(express.static('public'));
 
 const CONFIG = {
   ODDS_API_KEY: process.env.ODDS_API_KEY || '',
-  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
   MIN_PROBABILITY: 70,
   BANKER_THRESHOLD: 82,
   PORT: process.env.PORT || 3000,
@@ -49,25 +49,38 @@ async function fetchOddsForLeague(leagueKey) {
   } catch (err) { console.error(`[OddsAPI] ${leagueKey}:`, err.message); return []; }
 }
 
-async function analyzeMatchWithAI(match, leagueMeta) {
-  if (!CONFIG.ANTHROPIC_API_KEY) return null;
+async function analyzeMatchWithGemini(match, leagueMeta) {
+  if (!CONFIG.GEMINI_API_KEY) return null;
   const prompt = `You are a football European Handicap betting analyst.
 Match: ${match.home_team} vs ${match.away_team}
 League: ${leagueMeta.name}
 Date: ${match.commence_time}
-Select the best European Handicap pick (H1=win by 1+, H2=win by 2+, H3=win by 3+) for the favorite team. Only return if probability 70%+.
-Respond ONLY with valid JSON (no markdown):
-{"favorite":"exact team name","handicap":"H1","win_condition":"Win by 1+ goals","probability":75,"is_banker":false,"home_form":"WWDLW","away_form":"LWLLD","h2h_summary":"H2H short","insights":["tag1","tag2","tag3"],"bookmaker":"bet9ja","odds":1.75}`;
+
+Analyze this match and select the best European Handicap pick for the FAVORITE team.
+H1 = favorite wins by 1+ goals
+H2 = favorite wins by 2+ goals  
+H3 = favorite wins by 3+ goals
+
+Only return a pick if probability is 70% or higher, otherwise set probability to null.
+
+Respond ONLY with valid JSON, no markdown, no explanation:
+{"favorite":"exact team name here","handicap":"H1","win_condition":"Win by 1+ goals","probability":75,"is_banker":false,"home_form":"WWDLW","away_form":"LWLLD","h2h_summary":"H2H 5W-2D-3L","insights":["tag1","tag2","tag3"],"bookmaker":"bet9ja","odds":1.75}`;
+
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${CONFIG.GEMINI_API_KEY}`;
+    const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': CONFIG.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 400, messages: [{ role: 'user', content: prompt }] }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.3, maxOutputTokens: 400 }
+      }),
     });
     const data = await res.json();
-    const text = data.content?.[0]?.text || '';
-    return JSON.parse(text.replace(/```json|```/g, '').trim());
-  } catch (err) { console.error('[AI]', match.home_team, ':', err.message); return null; }
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const clean = text.replace(/```json|```/g, '').trim();
+    return JSON.parse(clean);
+  } catch (err) { console.error('[Gemini]', match.home_team, ':', err.message); return null; }
 }
 
 async function runDailyUpdate() {
@@ -80,7 +93,7 @@ async function runDailyUpdate() {
       const matchDate = new Date(match.commence_time).toISOString().split('T')[0];
       if (matchDate > new Date(Date.now() + 86400000 * 2).toISOString().split('T')[0]) continue;
       if (db.predictions.find(p => p.match_id === match.id)) continue;
-      const analysis = await analyzeMatchWithAI(match, league);
+      const analysis = await analyzeMatchWithGemini(match, league);
       if (!analysis || !analysis.probability || analysis.probability < CONFIG.MIN_PROBABILITY) continue;
       db.predictions.push({
         id: Date.now() + Math.random(), match_id: match.id, date: matchDate,
@@ -97,7 +110,7 @@ async function runDailyUpdate() {
         created_at: new Date().toISOString(),
       });
       added++;
-      await new Promise(r => setTimeout(r, 1100));
+      await new Promise(r => setTimeout(r, 500));
     }
   }
   writeDB(db);
