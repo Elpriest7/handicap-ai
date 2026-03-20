@@ -19,14 +19,12 @@ const CONFIG = {
 const DB_PATH = path.join('/tmp', 'handicap_db.json');
 
 function readDB() {
-  try {
-    if (fs.existsSync(DB_PATH)) return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
-  } catch (e) {}
+  try { if (fs.existsSync(DB_PATH)) return JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); } catch (e) {}
   return { predictions: [] };
 }
 
 function writeDB(data) {
-  try { fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2)); } catch (e) { console.error('DB write error:', e.message); }
+  try { fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2)); } catch (e) {}
 }
 
 async function callGemini(prompt) {
@@ -36,97 +34,83 @@ async function callGemini(prompt) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.4, maxOutputTokens: 3000 }
+      generationConfig: { temperature: 0.3, maxOutputTokens: 4000 }
     }),
   });
   const data = await res.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  console.log('[Gemini] Raw response length:', text.length);
+  return text;
+}
+
+function extractJSON(text) {
+  // Try to find JSON array in text
+  const start = text.indexOf('[');
+  const end = text.lastIndexOf(']');
+  if (start === -1 || end === -1) throw new Error('No JSON array found');
+  const jsonStr = text.substring(start, end + 1);
+  return JSON.parse(jsonStr);
 }
 
 async function runDailyUpdate() {
   console.log('[CRON] Starting daily AI prediction generation...');
-  if (!CONFIG.GEMINI_API_KEY) { console.log('[CRON] No Gemini key'); return 0; }
+  if (!CONFIG.GEMINI_API_KEY) { console.log('[CRON] No Gemini key set'); return 0; }
 
   const today = new Date().toISOString().split('T')[0];
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
   const db = readDB();
 
-  // Remove old predictions beyond 3 days
-  db.predictions = db.predictions.filter(p => {
-    const diff = (new Date(today) - new Date(p.date)) / 86400000;
-    return diff < 3;
-  });
+  // Clean old predictions
+  db.predictions = db.predictions.filter(p => new Date(p.date) >= new Date(today));
 
-  // Check if we already have today's predictions
-  const todayPreds = db.predictions.filter(p => p.date === today);
-  if (todayPreds.length >= 5) {
-    console.log(`[CRON] Already have ${todayPreds.length} predictions for today`);
-    return todayPreds.length;
+  const existing = db.predictions.filter(p => p.date === today || p.date === tomorrow);
+  if (existing.length >= 8) {
+    console.log(`[CRON] Already have ${existing.length} predictions`);
+    return existing.length;
   }
 
-  const prompt = `Today is ${today}. You are an expert football analyst for European Handicap betting.
+  // Ask for fewer predictions to avoid truncation
+  const prompt = `Today is ${today}. You are a football European Handicap analyst.
 
-Generate 15 high-probability European Handicap predictions for TODAY's and TOMORROW's real football matches across these leagues: Premier League, La Liga, Serie A, Bundesliga, Ligue 1.
+List 8 real football matches happening on ${today} or ${tomorrow} in Premier League, La Liga, Serie A, Bundesliga, or Ligue 1.
 
-For each match pick the FAVORITE team and assign H1 (win by 1+), H2 (win by 2+), or H3 (win by 3+).
-Only include picks with 70%+ probability.
-Mark picks with 82%+ probability as bankers.
+For each match select European Handicap for the favorite:
+H1 = win by 1+ goals (probability 70-79%)
+H2 = win by 2+ goals (probability 75-85%)  
+H3 = win by 3+ goals (probability 82-92%, banker=true)
 
-Use real upcoming matches you know about. If no matches today use tomorrow's matches.
-
-Respond ONLY with a valid JSON array, no markdown, no explanation:
-[
-  {
-    "date": "YYYY-MM-DD",
-    "league": "Premier League",
-    "league_flag": "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
-    "home_team": "Team A",
-    "away_team": "Team B",
-    "favorite": "Team A",
-    "handicap": "H1",
-    "handicap_label": "Team A H1",
-    "win_condition": "Win by 1+ goals",
-    "probability": 78,
-    "is_banker": false,
-    "bookmaker": "Bet9ja",
-    "odds": 1.75,
-    "home_form": "WWDLW",
-    "away_form": "LWLLD",
-    "h2h_summary": "H2H 5W-2D-3L",
-    "insights": ["Strong home record", "Away side struggling", "Top scorer fit"],
-    "match_time": "20:00"
-  }
-]`;
+Return ONLY a JSON array. Keep it short. No explanation:
+[{"date":"${today}","league":"Premier League","league_flag":"🏴󠁧󠁢󠁥󠁮󠁧󠁿","home_team":"Arsenal","away_team":"Wolves","favorite":"Arsenal","handicap":"H2","handicap_label":"Arsenal H2","win_condition":"Win by 2+ goals","probability":82,"is_banker":true,"bookmaker":"Bet9ja","odds":1.85,"home_form":"WWWDW","away_form":"LLLLD","h2h_summary":"Arsenal 6W last 8","insights":["Strong home form","Wolves struggling","Top scorer fit"],"match_time":"20:00"}]`;
 
   try {
     const text = await callGemini(prompt);
-    const clean = text.replace(/```json|```/g, '').trim();
-    const predictions = JSON.parse(clean);
+    const predictions = extractJSON(text);
+    console.log('[CRON] Parsed', predictions.length, 'predictions');
 
     let added = 0;
     for (const p of predictions) {
       if (!p.probability || p.probability < CONFIG.MIN_PROBABILITY) continue;
-      const matchId = `ai_${p.home_team}_${p.away_team}_${p.date}`.replace(/\s/g, '_');
+      const matchId = `ai_${p.home_team}_${p.away_team}_${p.date}`.replace(/\s/g,'_');
       if (db.predictions.find(x => x.match_id === matchId)) continue;
 
       db.predictions.push({
         id: Date.now() + Math.random(),
         match_id: matchId,
         date: p.date || today,
-        league: p.league,
+        league: p.league || 'Premier League',
         league_flag: p.league_flag || '⚽',
         home_team: p.home_team,
         away_team: p.away_team,
         favorite: p.favorite,
         handicap: p.handicap,
         handicap_label: p.handicap_label || `${p.favorite} ${p.handicap}`,
-        win_condition: p.win_condition,
+        win_condition: p.win_condition || `Win by ${p.handicap.replace('H','')}+ goals`,
         probability: p.probability,
         is_banker: p.probability >= 82 ? 1 : 0,
         bookmaker: p.bookmaker || 'Bet9ja',
         odds: p.odds || 1.75,
         status: 'pending',
-        home_score: null,
-        away_score: null,
+        home_score: null, away_score: null,
         home_form: p.home_form || 'WWDLW',
         away_form: p.away_form || 'LWLLL',
         h2h_summary: p.h2h_summary || '',
@@ -138,7 +122,7 @@ Respond ONLY with a valid JSON array, no markdown, no explanation:
     }
 
     writeDB(db);
-    console.log(`[CRON] Done. Added ${added} AI predictions.`);
+    console.log(`[CRON] Done. Added ${added} predictions.`);
     return added;
   } catch (err) {
     console.error('[CRON] Error:', err.message);
@@ -205,7 +189,7 @@ app.post('/api/trigger', async (req, res) => {
     const added = await runDailyUpdate();
     res.json({ success: true, message: `Done! Added ${added} predictions.` });
   } catch (err) {
-    res.json({ success: false, message: err.message });
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
