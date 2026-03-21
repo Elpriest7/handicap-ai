@@ -201,7 +201,102 @@ async function runDailyUpdate() {
 // Run daily at 7am
 cron.schedule('0 7 * * *', runDailyUpdate);
 
-// ── ROUTES ────────────────────────────────────────────────────
+// ── AUTO RESULT CHECKER ───────────────────────────────────────
+async function checkResults() {
+  console.log('[Results] Checking match results...');
+  if (!FOOTBALL_KEY) { console.log('[Results] No API key'); return; }
+
+  const db = load();
+  const pending = db.predictions.filter(p => p.status === 'pending');
+  if (!pending.length) { console.log('[Results] No pending predictions'); return; }
+
+  // Get unique leagues from pending predictions
+  const leagues = [...new Set(pending.map(p => p.league))];
+  let updated = 0;
+
+  for (const leagueName of leagues) {
+    const league = LEAGUES.find(l => l.name === leagueName);
+    if (!league) continue;
+
+    try {
+      // Fetch finished matches from last 3 days
+      const url = `https://api.football-data.org/v4/competitions/${league.code}/matches?status=FINISHED`;
+      const res = await fetch(url, { headers: { 'X-Auth-Token': FOOTBALL_KEY } });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const finished = data.matches || [];
+
+      for (const pred of pending.filter(p => p.league === leagueName)) {
+        // Only check matches that should be finished (date is today or earlier)
+        const matchDate = new Date(pred.date);
+        const now = new Date();
+        const hoursSinceMatch = (now - matchDate) / 3600000;
+        if (hoursSinceMatch < 2) continue; // Too early, match may not be done
+
+        // Find matching finished game by team name
+        const match = finished.find(m => {
+          const mHome = (m.homeTeam.shortName || m.homeTeam.name || '').toLowerCase();
+          const mAway = (m.awayTeam.shortName || m.awayTeam.name || '').toLowerCase();
+          const pHome = pred.home_team.toLowerCase();
+          const pAway = pred.away_team.toLowerCase();
+          // Match by first word of team name for flexibility
+          const homeMatch = mHome.includes(pHome.split(' ')[0]) || pHome.includes(mHome.split(' ')[0]);
+          const awayMatch = mAway.includes(pAway.split(' ')[0]) || pAway.includes(mAway.split(' ')[0]);
+          return homeMatch && awayMatch;
+        });
+
+        if (!match || !match.score?.fullTime) continue;
+
+        const homeScore = match.score.fullTime.home;
+        const awayScore = match.score.fullTime.away;
+        if (homeScore === null || awayScore === null) continue;
+
+        // Determine if bet WON or LOST based on European Handicap
+        // H1: favorite starts +1 up → wins unless LOSE the match
+        // H2: favorite starts +2 up → wins unless lose by 2+
+        // H3: favorite starts +3 up → wins unless lose by 3+
+        const favIsHome = pred.favorite.toLowerCase().includes(pred.home_team.toLowerCase().split(' ')[0]) ||
+                          pred.home_team.toLowerCase().includes(pred.favorite.toLowerCase().split(' ')[0]);
+        const favScore = favIsHome ? homeScore : awayScore;
+        const oppScore = favIsHome ? awayScore : homeScore;
+        const margin = favScore - oppScore; // positive = fav winning
+
+        let result;
+        if (pred.handicap === 'H1') {
+          // Fav starts +1 → loses only if they LOSE the actual match (margin < 0)
+          result = margin >= 0 ? 'win' : 'loss';
+        } else if (pred.handicap === 'H2') {
+          // Fav starts +2 → loses only if they lose by 2+ (margin <= -2)
+          result = margin >= -1 ? 'win' : 'loss';
+        } else if (pred.handicap === 'H3') {
+          // Fav starts +3 → loses only if they lose by 3+ (margin <= -3)
+          result = margin >= -2 ? 'win' : 'loss';
+        }
+
+        // Update prediction
+        const idx = db.predictions.findIndex(p => p.match_id === pred.match_id);
+        if (idx > -1) {
+          db.predictions[idx].status = result;
+          db.predictions[idx].home_score = homeScore;
+          db.predictions[idx].away_score = awayScore;
+          updated++;
+          console.log(`[Results] ${pred.home_team} ${homeScore}-${awayScore} ${pred.away_team} → ${pred.handicap_label} → ${result.toUpperCase()}`);
+        }
+      }
+    } catch(err) {
+      console.error(`[Results] ${leagueName}:`, err.message);
+    }
+    await new Promise(r => setTimeout(r, 600));
+  }
+
+  if (updated > 0) save(db);
+  console.log(`[Results] Updated ${updated} predictions.`);
+}
+
+// Check results every 2 hours
+cron.schedule('0 */2 * * *', checkResults);
+
+
 app.get('/api/predictions', (req, res) => {
   const { date, league='all', min_prob='70', bankers_only='false' } = req.query;
   const day = date || new Date().toISOString().split('T')[0];
@@ -270,6 +365,25 @@ app.post('/api/trigger', async (req, res) => {
   try {
     const n = await runDailyUpdate();
     res.json({ success:true, message:`Done! Added ${n} predictions.` });
+  } catch(e) { res.status(500).json({ success:false, message:e.message }); }
+});
+
+// Manual result check trigger
+app.get('/api/check-results', async (req, res) => {
+  console.log('[Trigger] Manual result check triggered');
+  try {
+    await checkResults();
+    const db = load();
+    const settled = db.predictions.filter(p => p.status !== 'pending');
+    res.json({ success:true, message:`Results checked! ${settled.length} settled predictions.` });
+  } catch(e) { res.status(500).json({ success:false, message:e.message }); }
+});
+
+// Manually trigger result check
+app.post('/api/check-results', async (req, res) => {
+  try {
+    await checkResults();
+    res.json({ success:true, message:'Results checked and updated!' });
   } catch(e) { res.status(500).json({ success:false, message:e.message }); }
 });
 
