@@ -141,6 +141,7 @@ main{padding:0 16px 100px;position:relative;z-index:1}
 
 <div class="tabs-wrap">
   <div class="tabs">
+    <button class="tab" onclick="setDay('yesterday',this)">⬅ Yesterday</button>
     <button class="tab active" onclick="setDay('today',this)">⚽ Today</button>
     <button class="tab" onclick="setDay('tomorrow',this)">📅 Tomorrow</button>
     <button class="tab" onclick="setView('bankers',this)">⭐ Bankers</button>
@@ -189,6 +190,7 @@ main{padding:0 16px 100px;position:relative;z-index:1}
 <div class="toast" id="toast"><span id="tmsg">Done!</span></div>
 
 <div class="bottom-nav">
+  <button class="nav-item" onclick="setDay('yesterday',null,this)"><div class="nav-icon">⬅</div><div class="nav-label">Yesterday</div></button>
   <button class="nav-item active" onclick="setDay('today',null,this)"><div class="nav-icon">⚽</div><div class="nav-label">Today</div></button>
   <button class="nav-item" onclick="setDay('tomorrow',null,this)"><div class="nav-icon">📅</div><div class="nav-label">Tomorrow</div></button>
   <button class="nav-item" onclick="setView('analytics',null,this)"><div class="nav-icon">📊</div><div class="nav-label">Analytics</div></button>
@@ -216,9 +218,16 @@ async function loadPredictions(manual=false) {
   const container = document.getElementById('picks-container');
   container.innerHTML = [1,2,3].map(()=>'<div class="skeleton"></div>').join('');
 
-  const offset = S.day === 'tomorrow' ? 1 : S.day === 'dayafter' ? 2 : 0;
+  const offset = S.day === 'yesterday' ? -1 : S.day === 'tomorrow' ? 1 : S.day === 'dayafter' ? 2 : 0;
   const date = getDate(offset);
-  document.getElementById('date-label').textContent = S.day === 'today' ? '📅 Today — ' + date : S.day === 'tomorrow' ? '📅 Tomorrow — ' + date : '📅 ' + date;
+  const dayLabel = S.day === 'yesterday'
+    ? '⬅ Yesterday — ' + new Date(Date.now()-86400000).toLocaleDateString('en-GB', {weekday:'short', day:'numeric', month:'short'})
+    : S.day === 'today'
+    ? '📅 Today — ' + new Date().toLocaleDateString('en-GB', {weekday:'short', day:'numeric', month:'short'})
+    : S.day === 'tomorrow'
+    ? '📅 Tomorrow — ' + new Date(Date.now()+86400000).toLocaleDateString('en-GB', {weekday:'short', day:'numeric', month:'short'})
+    : '📅 ' + date;
+  document.getElementById('date-label').textContent = dayLabel;
 
   try {
     const qs = new URLSearchParams({ date, league: S.league, min_prob: 70 });
@@ -391,6 +400,32 @@ function openCfg() {
 window.addEventListener('DOMContentLoaded', () => {
   loadPredictions();
   setTimeout(() => showToast('🏆 HandicapAI Live!'), 1000);
+
+  // Auto-refresh every 20 minutes to catch result updates
+  setInterval(() => {
+    console.log('[Auto-refresh] Checking for updates...');
+    loadPredictions();
+  }, 20 * 60 * 1000);
+
+  // At midnight, auto-switch to new day
+  function scheduleMidnightReset() {
+    const now = new Date();
+    const midnight = new Date();
+    midnight.setHours(24, 1, 0, 0); // 1 min past midnight
+    const msUntilMidnight = midnight - now;
+    setTimeout(() => {
+      console.log('[Midnight] New day — refreshing...');
+      S.day = 'today';
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      // Today is now the 2nd tab (index 1)
+      document.querySelectorAll('.tab')[1].classList.add('active');
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+      document.querySelectorAll('.nav-item')[1].classList.add('active');
+      loadPredictions();
+      scheduleMidnightReset();
+    }, msUntilMidnight);
+  }
+  scheduleMidnightReset();
 });
 </script>
 </body>
