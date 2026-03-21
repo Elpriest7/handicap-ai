@@ -14,7 +14,11 @@ const PORT = process.env.PORT || 3000;
 const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 const FOOTBALL_KEY = process.env.FOOTBALL_API_KEY || '';
 const APIFOOTBALL_KEY = process.env.APIFOOTBALL_KEY || '';
-const DB = path.join('/tmp', 'db.json');
+const DB_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || '/data';
+const DB = path.join(DB_DIR, 'db.json');
+
+// Ensure DB directory exists
+try { if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true }); } catch(e) {}
 
 // ── LEAGUE CODES ──────────────────────────────────────────────
 const LEAGUES = [
@@ -515,4 +519,23 @@ app.post('/api/update-result', (req, res) => {
   res.json({ success:true, result, match:`${pred.home_team} ${home_score}-${away_score} ${pred.away_team}`, pick:pred.handicap_label });
 });
 app.get('/health', (req,res) => res.json({status:'ok', time:new Date().toISOString()}));
-app.listen(PORT, () => console.log(`🚀 HandicapAI on port ${PORT}`));
+app.listen(PORT, async () => {
+  console.log(`🚀 HandicapAI running on port ${PORT}`);
+  console.log(`💾 Database: ${DB}`);
+
+  // Auto-seed if database is empty on startup
+  const db = load();
+  if (!db.predictions || db.predictions.length === 0) {
+    console.log('[Startup] Empty DB detected — auto-seeding...');
+    try {
+      const seedUrl = `http://localhost:${PORT}/api/seed`;
+      setTimeout(async () => {
+        const res = await fetch(seedUrl);
+        const data = await res.json();
+        console.log('[Startup] Auto-seed:', data.message);
+      }, 2000);
+    } catch(e) { console.log('[Startup] Auto-seed error:', e.message); }
+  } else {
+    console.log(`[Startup] DB has ${db.predictions.length} predictions`);
+  }
+});
