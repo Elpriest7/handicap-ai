@@ -140,10 +140,8 @@ async function runDailyUpdate() {
   const db = load();
   const today = new Date().toISOString().split('T')[0];
 
-  // Clean old predictions (older than 3 days)
-  db.predictions = db.predictions.filter(p =>
-    new Date(p.date) >= new Date(today)
-  );
+  // Never delete old predictions — they are history
+  // Only fetch new ones for today and tomorrow
 
   // Get real fixtures from football-data.org
   const fixtures = await fetchFixtures();
@@ -198,7 +196,7 @@ async function runDailyUpdate() {
   return added;
 }
 
-// Run daily at 7am
+// Run daily at 7am — fetch new predictions
 cron.schedule('0 7 * * *', runDailyUpdate);
 
 // ── AUTO RESULT CHECKER ───────────────────────────────────────
@@ -230,8 +228,8 @@ async function checkResults() {
         // Only check matches that should be finished (date is today or earlier)
         const matchDate = new Date(pred.date);
         const now = new Date();
-        const hoursSinceMatch = (now - matchDate) / 3600000;
-        if (hoursSinceMatch < 2) continue; // Too early, match may not be done
+        const minsSinceMatch = (now - matchDate) / 60000;
+        if (minsSinceMatch < 20) continue; // Wait at least 20 mins after match date
 
         // Find matching finished game by team name
         const match = finished.find(m => {
@@ -293,8 +291,42 @@ async function checkResults() {
   console.log(`[Results] Updated ${updated} predictions.`);
 }
 
-// Check results every 2 hours
-cron.schedule('0 */2 * * *', checkResults);
+// ── MIDNIGHT ROLLOVER ─────────────────────────────────────────
+async function midnightRollover() {
+  console.log('[Rollover] Midnight rollover starting...');
+  const db = load();
+  const today = new Date().toISOString().split('T')[0];
+  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+
+  // Any pending from yesterday = mark expired (match already passed, no result found)
+  let expired = 0;
+  db.predictions.forEach(p => {
+    if (p.date <= yesterday && p.status === 'pending') {
+      p.status = 'expired';
+      expired++;
+    }
+  });
+
+  // NEVER delete old predictions — they stay as history
+  // Just keep a maximum of 60 days of history to avoid DB growing too large
+  const cutoff = new Date(Date.now() - 60*86400000).toISOString().split('T')[0];
+  const before = db.predictions.length;
+  db.predictions = db.predictions.filter(p => p.date >= cutoff);
+  const removed = before - db.predictions.length;
+
+  save(db);
+  console.log(`[Rollover] ${expired} expired. ${removed} very old removed (60d+). Fetching new fixtures...`);
+
+  // Auto-fetch new predictions for the new day
+  await runDailyUpdate();
+  console.log('[Rollover] Done!');
+}
+
+// Midnight rollover — clean up old, fetch new day's predictions
+cron.schedule('1 0 * * *', midnightRollover);
+
+// Check results every 20 minutes
+cron.schedule('*/20 * * * *', checkResults);
 
 
 app.get('/api/predictions', (req, res) => {
