@@ -14,11 +14,14 @@ const PORT = process.env.PORT || 3000;
 const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 const FOOTBALL_KEY = process.env.FOOTBALL_API_KEY || '';
 const APIFOOTBALL_KEY = process.env.APIFOOTBALL_KEY || '';
-const DB_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || '/data';
+// Use persistent storage — try /data (volume) first, fallback to app dir
+const DB_DIR = fs.existsSync('/data') ? '/data' : path.join(__dirname, 'storage');
 const DB = path.join(DB_DIR, 'db.json');
 
 // Ensure DB directory exists
-try { if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true }); } catch(e) {}
+try { if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true }); } catch(e) {
+  console.error('DB dir error:', e.message);
+}
 
 // ── LEAGUE CODES ──────────────────────────────────────────────
 const LEAGUES = [
@@ -420,12 +423,13 @@ app.post('/api/check-results', async (req, res) => {
   } catch(e) { res.status(500).json({ success:false, message:e.message }); }
 });
 
-// Seed with real fixtures for this weekend
-app.get('/api/seed', (req, res) => {
-  const db = load();
+// Fresh reseed — clears ALL old data and reseeds with current dates
+app.get('/api/reseed', (req, res) => {
+  const db = { predictions: [] }; // Clear everything
   const d0 = new Date().toISOString().split('T')[0];
   const d1 = new Date(Date.now()+86400000).toISOString().split('T')[0];
   const d2 = new Date(Date.now()+172800000).toISOString().split('T')[0];
+  console.log(`[Reseed] Dates: Today=${d0} Tomorrow=${d1} Day2=${d2}`);
   const seeds = [
     // ── TODAY Mar 20 ─────────────────────────────────────────
     // MUN odds ~1.90 + good form → H2
@@ -477,15 +481,13 @@ app.get('/api/seed', (req, res) => {
     // Marseille odds ~1.95 + good form → H2
     {match_id:'olm_lil',date:d2,league:'Ligue 1',league_flag:'🇫🇷',home_team:'Olympique Marseille',away_team:'Lille OSC',favorite:'Olympique Marseille',handicap:'H2',handicap_label:'Marseille H2',win_condition:'Starts +2 up, wins unless lose by 2+',probability:73,is_banker:0,bookmaker:'Bet9ja',odds:1.95,status:'pending',home_form:'WWWLL',away_form:'WDLWL',h2h_summary:'OLM 4W last 7 home',insights:['Marseille Velodrome','Lille good form','Tight contest'],match_time:'16:15',writeup:"Marseille start 2 goals ahead at the Vélodrome. Marseille have won 3 of their last 5 at home and Lille, while strong, have struggled on the road recently. The 2-goal head start means Marseille only lose this bet if they are beaten by 2 or more — very unlikely at home."},
   ];
-  let added = 0;
+  // Push all seeds directly (db was cleared above)
   seeds.forEach(s => {
-    if (!db.predictions.find(x => x.match_id === s.match_id)) {
-      db.predictions.push({...s, id:`seed_${s.match_id}`, home_score:null, away_score:null, created_at:new Date().toISOString()});
-      added++;
-    }
+    db.predictions.push({...s, id:`seed_${s.match_id}`, home_score:null, away_score:null, created_at:new Date().toISOString()});
   });
   save(db);
-  res.json({ success:true, message:`Seeded ${added} predictions!`, total:db.predictions.length });
+  console.log(`[Reseed] Done. ${seeds.length} predictions for Today=${d0}, Tomorrow=${d1}, Day2=${d2}`);
+  res.json({ success:true, message:`Reseeded ${seeds.length} predictions with correct dates!`, today:d0, tomorrow:d1, day2:d2, total:db.predictions.length });
 });
 
 // Manual result update — POST with match_id, home_score, away_score
@@ -528,7 +530,7 @@ app.listen(PORT, async () => {
   if (!db.predictions || db.predictions.length === 0) {
     console.log('[Startup] Empty DB detected — auto-seeding...');
     try {
-      const seedUrl = `http://localhost:${PORT}/api/seed`;
+      const seedUrl = `http://localhost:${PORT}/api/reseed`;
       setTimeout(async () => {
         const res = await fetch(seedUrl);
         const data = await res.json();
