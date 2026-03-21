@@ -65,11 +65,49 @@ async function fetchFixtures() {
 async function askGemini(home, away, league) {
   if (!GEMINI_KEY) return null;
   try {
-    const prompt = `Football: ${home} vs ${away} (${league}).
-Who is the favorite? European Handicap pick H1/H2/H3. Only if 70%+ probability.
-Reply ONLY with this JSON (no extra text):
-{"fav":"${home}","h":"H1","prob":75,"odds":1.80,"hf":"WWDLW","af":"LWLLD","h2h":"5W-2D-3L","tips":["tip1","tip2","tip3"]}
-If prob under 70 reply: {"skip":true}`;
+    const prompt = `You are a strict European Handicap betting analyst. Analyze: ${home} vs ${away} (${league}).
+
+EUROPEAN HANDICAP LOGIC:
+- H1 = favorite must win by 1+ goals (opponent gets +1 goal head start)
+- H2 = favorite must win by 2+ goals (opponent gets +2 goal head start)
+- H3 = favorite must win by 3+ goals (opponent gets +3 goal head start)
+- Only pick the favorite team — the stronger, more consistent side
+
+STRICT SELECTION RULES — SKIP the match if ANY of these apply:
+❌ Favorite lost 3 or more of last 5 matches
+❌ Opponent is defensively strong (concedes less than 1 goal per game)
+❌ Match looks unpredictable or evenly matched
+❌ Handicap odds would be below 1.35 (too risky low value)
+❌ Favorite has inconsistent recent form
+❌ Low motivation match (nothing to play for)
+❌ High chance of upset based on context
+❌ Something looks "too easy" but recent form says otherwise
+
+ONLY PICK if ALL of these are true:
+✅ Favorite wins frequently and rarely loses
+✅ Favorite has won 3 or more of last 5 matches
+✅ Opponent is weak away or has poor recent form
+✅ H2H history strongly favors the favorite
+✅ Probability is genuinely 70% or higher
+✅ Odds would be between 1.40 and 2.50
+
+BANKER RULE: Only assign banker=true if probability is 80% or above AND all filters pass strongly.
+
+HANDICAP SELECTION GUIDE (follow strictly):
+- 70-74% = H3 (team strong enough to win by 3+)
+- 75-79% = H2 (team strong enough to win by 2+)
+- 80-89% = H1 (very high confidence, win by 1+ is enough)
+- 90-95% = H1 BANKER (near certain win, safest pick)
+
+IMPORTANT: Higher probability = LOWER handicap (H1)
+Lower probability within 70%+ range = HIGHER handicap (H2/H3)
+This reflects: if you're only 70-75% sure, you need bigger margin to justify the pick.
+If you're 80%+ sure, H1 is the safe reliable pick.
+
+Reply ONLY with valid JSON (no markdown, no text):
+{"fav":"team name","h":"H1","prob":75,"banker":false,"odds":1.80,"hf":"WWDLW","af":"LWLLD","h2h":"5W-2D-3L","tips":["specific reason 1","specific reason 2","specific reason 3"]}
+
+If match fails ANY filter above, reply ONLY: {"skip":true}`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`;
     const res = await fetch(url, {
@@ -77,7 +115,7 @@ If prob under 70 reply: {"skip":true}`;
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 150 }
+        generationConfig: { temperature: 0.1, maxOutputTokens: 200 }
       })
     });
     const d = await res.json();
@@ -86,6 +124,10 @@ If prob under 70 reply: {"skip":true}`;
     if (s < 0 || e < 0) return null;
     const j = JSON.parse(txt.slice(s, e+1));
     if (j.skip || !j.prob || j.prob < 70) return null;
+    // Enforce odds filter — skip if odds too low
+    if (j.odds && j.odds < 1.35) return null;
+    // Banker only at 80%+
+    j.banker = j.prob >= 80;
     return j;
   } catch(err) { console.log('[Gemini] err:', err.message); return null; }
 }
@@ -131,7 +173,7 @@ async function runDailyUpdate() {
       handicap_label: `${fav} ${hcap}`,
       win_condition: hcap==='H1'?'Win by 1+ goals':hcap==='H2'?'Win by 2+ goals':'Win by 3+ goals',
       probability: ai.prob,
-      is_banker: ai.prob >= 82 ? 1 : 0,
+      is_banker: (ai.banker && ai.prob >= 80) ? 1 : 0,
       bookmaker: 'Bet9ja',
       odds: ai.odds || 1.75,
       status: 'pending',
