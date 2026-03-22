@@ -271,8 +271,8 @@ function renderPicks(preds, container) {
 
 function cardHTML(p) {
   const ins = Array.isArray(p.insights) ? p.insights : [];
-  const hf = (p.home_form||'WWDLW').split('');
-  const af = (p.away_form||'LWLLL').split('');
+  const hf = (p.home_form||'WWDLW').split('').slice(0,5);
+  const af = (p.away_form||'LWLLL').split('').slice(0,5);
   const prob = p.probability||75;
   const C = 138.2;
   const off = C - (prob/100)*C;
@@ -287,9 +287,9 @@ function cardHTML(p) {
   </div>
   <div class="match-body">
     <div class="teams">
-      <div class="team"><div class="team-name">${p.home_team}</div><div class="team-form">${hf.map(f=>`<div class="fd ${f}"></div>`).join('')}</div></div>
+      <div class="team"><div class="team-name">${p.home_team}</div><div class="team-form" title="Recent form — left is most recent">${hf.map(f=>`<div class="fd ${f}"></div>`).join('')}<span style="font-size:9px;color:var(--muted);margin-left:3px">←new</span></div></div>
       <div class="vs-block"><div class="vs-text">VS</div><div class="match-time">${p.match_time||'--:--'}</div></div>
-      <div class="team"><div class="team-name">${p.away_team}</div><div class="team-form">${af.map(f=>`<div class="fd ${f}"></div>`).join('')}</div></div>
+      <div class="team"><div class="team-name">${p.away_team}</div><div class="team-form" title="Recent form — left is most recent">${af.map(f=>`<div class="fd ${f}"></div>`).join('')}<span style="font-size:9px;color:var(--muted);margin-left:3px">←new</span></div></div>
     </div>
     <div class="pick-row">
       <div class="pick-left">
