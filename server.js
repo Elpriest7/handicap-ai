@@ -390,20 +390,24 @@ app.get('/api/debug-results', async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const allMatches = [];
     for (const lg of LEAGUES) {
-      const r = await fetch(`https://api.football-data.org/v4/competitions/${lg.code}/matches?dateFrom=${yesterday}&dateTo=${today}&status=FINISHED`, {
-        headers: {'X-Auth-Token': FOOTBALL_KEY}
-      });
-      const d = await r.json();
-      (d.matches||[]).forEach(m => allMatches.push({
-        league: lg.name,
-        home: m.homeTeam?.shortName || m.homeTeam?.name,
-        away: m.awayTeam?.shortName || m.awayTeam?.name,
-        score: `${m.score?.fullTime?.home}-${m.score?.fullTime?.away}`,
-        date: m.utcDate?.split('T')[0]
-      }));
-      await new Promise(r=>setTimeout(r,500));
+      try {
+        const r = await fetch(`https://api.football-data.org/v4/competitions/${lg.code}/matches?dateFrom=${yesterday}&dateTo=${today}&status=FINISHED`, {
+          headers: {'X-Auth-Token': FOOTBALL_KEY}
+        });
+        const d = await r.json();
+        (d.matches||[]).forEach(m => allMatches.push({
+          league: lg.name,
+          home_short: m.homeTeam?.shortName,
+          home_full: m.homeTeam?.name,
+          away_short: m.awayTeam?.shortName,
+          away_full: m.awayTeam?.name,
+          score: `${m.score?.fullTime?.home}-${m.score?.fullTime?.away}`,
+          date: m.utcDate?.split('T')[0]
+        }));
+        await new Promise(r=>setTimeout(r,400));
+      } catch(e) {}
     }
-    res.json({date_from:yesterday, date_to:today, count:allMatches.length, matches:allMatches});
+    res.json({count: allMatches.length, matches: allMatches});
   } catch(e) { res.json({error: e.message}); }
 });
 
