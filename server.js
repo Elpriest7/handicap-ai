@@ -193,13 +193,21 @@ async function checkResults() {
     if (!lg||!lg.apiId) continue;
     try {
       const season = new Date().getFullYear();
-      const r = await fetch(`https://v3.football.api-sports.io/fixtures?league=${lg.apiId}&season=${season}&last=10&status=FT`,{
-        headers:{'x-rapidapi-key':APIFOOTBALL_KEY,'x-rapidapi-host':'v3.football.api-sports.io'}
-      });
-      if (!r.ok) continue;
-      const d = await r.json();
-      const finished = d.response||[];
-      console.log(`[Results] ${lgName}: ${finished.length} finished`);
+      const yesterday = new Date(Date.now()-86400000).toISOString().split('T')[0];
+      const today = new Date().toISOString().split('T')[0];
+      // Fetch finished matches by date (works on free tier)
+      const finished = [];
+      for (const date of [yesterday, today]) {
+        const r = await fetch(`https://v3.football.api-sports.io/fixtures?league=${lg.apiId}&season=${season}&date=${date}`,{
+          headers:{'x-rapidapi-key':APIFOOTBALL_KEY,'x-rapidapi-host':'v3.football.api-sports.io'}
+        });
+        if (!r.ok) continue;
+        const d = await r.json();
+        const done = (d.response||[]).filter(f=>f.fixture?.status?.short==='FT');
+        finished.push(...done);
+        await new Promise(r=>setTimeout(r,300));
+      }
+      console.log(`[Results] ${lgName}: ${finished.length} finished matches`);
       for (const pred of pending.filter(p=>p.league===lgName)) {
         const minsSince = (new Date()-new Date(pred.date))/60000;
         if (minsSince<20) continue;
@@ -366,17 +374,22 @@ app.get('/api/debug-results', async (req, res) => {
   if (!APIFOOTBALL_KEY) return res.json({error:'No API key'});
   try {
     const season = new Date().getFullYear();
-    const r = await fetch(`https://v3.football.api-sports.io/fixtures?league=39&season=${season}&last=10&status=FT`, {
+    const yesterday = new Date(Date.now()-86400000).toISOString().split('T')[0];
+    const today = new Date().toISOString().split('T')[0];
+
+    // Try by date range
+    const r = await fetch(`https://v3.football.api-sports.io/fixtures?date=${yesterday}&league=39&season=${season}`, {
       headers: {'x-rapidapi-key': APIFOOTBALL_KEY, 'x-rapidapi-host': 'v3.football.api-sports.io'}
     });
     const d = await r.json();
     const matches = (d.response||[]).map(f => ({
       home: f.teams?.home?.name,
       away: f.teams?.away?.name,
+      status: f.fixture?.status?.short,
       score: `${f.goals?.home}-${f.goals?.away}`,
       date: f.fixture?.date?.split('T')[0]
     }));
-    res.json({count: matches.length, matches});
+    res.json({date_checked: yesterday, count: matches.length, matches, errors: d.errors});
   } catch(e) { res.json({error: e.message}); }
 });
 
