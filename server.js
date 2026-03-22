@@ -192,47 +192,44 @@ async function checkResults() {
     const lg = LEAGUES.find(l=>l.name===lgName);
     if (!lg||!lg.apiId) continue;
     try {
-      const season = new Date().getFullYear();
       const yesterday = new Date(Date.now()-86400000).toISOString().split('T')[0];
       const today = new Date().toISOString().split('T')[0];
-      // Fetch finished matches by date (works on free tier)
-      const finished = [];
-      for (const date of [yesterday, today]) {
-        const r = await fetch(`https://v3.football.api-sports.io/fixtures?league=${lg.apiId}&season=${season}&date=${date}`,{
-          headers:{'x-rapidapi-key':APIFOOTBALL_KEY,'x-rapidapi-host':'v3.football.api-sports.io'}
-        });
-        if (!r.ok) continue;
-        const d = await r.json();
-        const done = (d.response||[]).filter(f=>f.fixture?.status?.short==='FT');
-        finished.push(...done);
-        await new Promise(r=>setTimeout(r,300));
-      }
+      // Use football-data.org — supports current 2026 season
+      const url = `https://api.football-data.org/v4/competitions/${lg.code}/matches?dateFrom=${yesterday}&dateTo=${today}&status=FINISHED`;
+      const r = await fetch(url, { headers:{'X-Auth-Token': FOOTBALL_KEY} });
+      if (!r.ok) { console.log(`[Results] ${lg.code} error:`, r.status); continue; }
+      const d = await r.json();
+      const finished = d.matches || [];
       console.log(`[Results] ${lgName}: ${finished.length} finished matches`);
       for (const pred of pending.filter(p=>p.league===lgName)) {
         const minsSince = (new Date()-new Date(pred.date))/60000;
         if (minsSince<20) continue;
         const fix = finished.find(f=>{
-          const mH=(f.teams?.home?.name||'').toLowerCase();
-          const mA=(f.teams?.away?.name||'').toLowerCase();
+          const mH=(f.homeTeam?.shortName||f.homeTeam?.name||'').toLowerCase();
+          const mA=(f.awayTeam?.shortName||f.awayTeam?.name||'').toLowerCase();
           const pH=pred.home_team.toLowerCase();
           const pA=pred.away_team.toLowerCase();
-          return (mH.includes(pH.split(' ')[0])||pH.includes(mH.split(' ')[0]))&&
-                 (mA.includes(pA.split(' ')[0])||pA.includes(mA.split(' ')[0]));
+          const homeMatch = mH.includes(pH.split(' ')[0]) || pH.includes(mH.split(' ')[0]);
+          const awayMatch = mA.includes(pA.split(' ')[0]) || pA.includes(mA.split(' ')[0]);
+          return homeMatch && awayMatch;
         });
         if (!fix) continue;
-        const hs=fix.goals?.home, as=fix.goals?.away;
-        if (hs===null||hs===undefined||as===null||as===undefined) continue;
+        // football-data.org score format
+        const hs = fix.score?.fullTime?.home ?? fix.goals?.home;
+        const as2 = fix.score?.fullTime?.away ?? fix.goals?.away;
+        if (hs===null||hs===undefined||as2===null||as2===undefined) continue;
         const favIsHome = pred.home_team.toLowerCase().includes(pred.favorite.toLowerCase().split(' ')[0])||
                           pred.favorite.toLowerCase().includes(pred.home_team.toLowerCase().split(' ')[0]);
-        const fs2=favIsHome?hs:as, os=favIsHome?as:hs;
-        const margin=fs2-os;
+        const favScore = favIsHome ? hs : as2;
+        const oppScore = favIsHome ? as2 : hs;
+        const margin = favScore - oppScore;
         let result;
         if(pred.handicap==='H1') result=margin>=0?'win':'loss';
         else if(pred.handicap==='H2') result=margin>=-1?'win':'loss';
         else result=margin>=-2?'win':'loss';
-        await dbUpdateResult(pred.match_id, result, hs, as);
+        await dbUpdateResult(pred.match_id, result, hs, as2);
         updated++;
-        console.log(`[Results] ✅ ${pred.home_team} ${hs}-${as} ${pred.away_team} → ${pred.handicap_label} → ${result.toUpperCase()}`);
+        console.log(`[Results] ✅ ${pred.home_team} ${hs}-${as2} ${pred.away_team} → ${pred.handicap_label} → ${result.toUpperCase()}`);
       }
     } catch(e) { console.error('[Results]',lgName,e.message); }
     await new Promise(r=>setTimeout(r,600));
@@ -369,27 +366,28 @@ app.get('/api/reseed', async (req,res) => {
   res.json({success:true, message:`Reseeded ${seeds.length} predictions!`, yesterday:dm1, today:d0, tomorrow:d1});
 });
 
-// Debug — see what API-Football returns for a league
+// Debug — see what football-data.org returns for ALL leagues
 app.get('/api/debug-results', async (req, res) => {
-  if (!APIFOOTBALL_KEY) return res.json({error:'No API key'});
+  if (!FOOTBALL_KEY) return res.json({error:'No FOOTBALL_KEY'});
   try {
-    const season = new Date().getFullYear();
     const yesterday = new Date(Date.now()-86400000).toISOString().split('T')[0];
     const today = new Date().toISOString().split('T')[0];
-
-    // Try by date range
-    const r = await fetch(`https://v3.football.api-sports.io/fixtures?date=${yesterday}&league=39&season=${season}`, {
-      headers: {'x-rapidapi-key': APIFOOTBALL_KEY, 'x-rapidapi-host': 'v3.football.api-sports.io'}
-    });
-    const d = await r.json();
-    const matches = (d.response||[]).map(f => ({
-      home: f.teams?.home?.name,
-      away: f.teams?.away?.name,
-      status: f.fixture?.status?.short,
-      score: `${f.goals?.home}-${f.goals?.away}`,
-      date: f.fixture?.date?.split('T')[0]
-    }));
-    res.json({date_checked: yesterday, count: matches.length, matches, errors: d.errors});
+    const allMatches = [];
+    for (const lg of LEAGUES) {
+      const r = await fetch(`https://api.football-data.org/v4/competitions/${lg.code}/matches?dateFrom=${yesterday}&dateTo=${today}&status=FINISHED`, {
+        headers: {'X-Auth-Token': FOOTBALL_KEY}
+      });
+      const d = await r.json();
+      (d.matches||[]).forEach(m => allMatches.push({
+        league: lg.name,
+        home: m.homeTeam?.shortName || m.homeTeam?.name,
+        away: m.awayTeam?.shortName || m.awayTeam?.name,
+        score: `${m.score?.fullTime?.home}-${m.score?.fullTime?.away}`,
+        date: m.utcDate?.split('T')[0]
+      }));
+      await new Promise(r=>setTimeout(r,500));
+    }
+    res.json({date_from:yesterday, date_to:today, count:allMatches.length, matches:allMatches});
   } catch(e) { res.json({error: e.message}); }
 });
 
