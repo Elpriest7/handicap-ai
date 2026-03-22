@@ -216,18 +216,35 @@ async function checkResults() {
       for (const pred of pending.filter(p=>p.league===lgName)) {
         const minsSince = (new Date()-new Date(pred.date))/60000;
         if (minsSince<20) continue;
+        // Alias table for known mismatches
+        const ALIASES = {
+          'barca': 'barcelona', 'bara': 'barcelona',
+          'nottingham': 'nottm forest', 'nottm': 'nottingham',
+          'atletico madrid': 'atleti', 'atleti': 'atletico madrid',
+          'inter milan': 'inter', 'inter milano': 'inter',
+          'ac milan': 'milan', 'milan': 'ac milan',
+          'paris saint germain': 'psg', 'psg': 'paris saint germain',
+        };
         const fix = finished.find(f=>{
-          const mH=(f.homeTeam?.shortName||f.homeTeam?.name||'').toLowerCase().replace(/[^a-z0-9 ]/g,'');
-          const mA=(f.awayTeam?.shortName||f.awayTeam?.name||'').toLowerCase().replace(/[^a-z0-9 ]/g,'');
-          const pH=pred.home_team.toLowerCase().replace(/[^a-z0-9 ]/g,'');
-          const pA=pred.away_team.toLowerCase().replace(/[^a-z0-9 ]/g,'');
-          // Get all meaningful words (3+ chars) from each name
-          const hWords = pH.split(' ').filter(w=>w.length>=3);
-          const aWords = pA.split(' ').filter(w=>w.length>=3);
-          // Match if ANY meaningful word matches
-          const homeMatch = hWords.some(w=>mH.includes(w)) || mH.split(' ').filter(w=>w.length>=3).some(w=>pH.includes(w));
-          const awayMatch = aWords.some(w=>mA.includes(w)) || mA.split(' ').filter(w=>w.length>=3).some(w=>pA.includes(w));
-          return homeMatch && awayMatch;
+          const norm = s => {
+            let n = s.toLowerCase()
+              .replace(/fc |cf |afc |sc |ac |rc |us |ss |as |sv |vfb |vfl |fsv |ca |og |rcd |1\. /g,' ')
+              .replace(/[^a-z0-9 ]/g,' ')
+              .replace(/\s+/g,' ').trim();
+            return ALIASES[n] || n;
+          };
+          const mH = norm(f.homeTeam?.shortName||f.homeTeam?.name||'');
+          const mA = norm(f.awayTeam?.shortName||f.awayTeam?.name||'');
+          const pH = norm(pred.home_team);
+          const pA = norm(pred.away_team);
+          const match = (a, b) => {
+            if (a===b) return true;
+            if (a.includes(b) || b.includes(a)) return true;
+            const aWords = a.split(' ').filter(w=>w.length>=3);
+            const bWords = b.split(' ').filter(w=>w.length>=3);
+            return aWords.some(w=>b.includes(w)) || bWords.some(w=>a.includes(w));
+          };
+          return match(mH, pH) && match(mA, pA);
         });
         if (!fix) continue;
         // football-data.org score format
