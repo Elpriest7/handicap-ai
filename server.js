@@ -217,15 +217,16 @@ async function checkResults() {
         const minsSince = (new Date()-new Date(pred.date))/60000;
         if (minsSince<20) continue;
         const fix = finished.find(f=>{
-          const mH=(f.homeTeam?.shortName||f.homeTeam?.name||'').toLowerCase();
-          const mA=(f.awayTeam?.shortName||f.awayTeam?.name||'').toLowerCase();
-          const pH=pred.home_team.toLowerCase();
-          const pA=pred.away_team.toLowerCase();
-          // Match using multiple word fragments for better accuracy
-          const homeMatch = mH.includes(pH.split(' ')[0]) || pH.includes(mH.split(' ')[0]) ||
-                            mH.includes(pH.split(' ')[1]||'__') || pH.split(' ').some(w=>w.length>3&&mH.includes(w));
-          const awayMatch = mA.includes(pA.split(' ')[0]) || pA.includes(mA.split(' ')[0]) ||
-                            mA.includes(pA.split(' ')[1]||'__') || pA.split(' ').some(w=>w.length>3&&mA.includes(w));
+          const mH=(f.homeTeam?.shortName||f.homeTeam?.name||'').toLowerCase().replace(/[^a-z0-9 ]/g,'');
+          const mA=(f.awayTeam?.shortName||f.awayTeam?.name||'').toLowerCase().replace(/[^a-z0-9 ]/g,'');
+          const pH=pred.home_team.toLowerCase().replace(/[^a-z0-9 ]/g,'');
+          const pA=pred.away_team.toLowerCase().replace(/[^a-z0-9 ]/g,'');
+          // Get all meaningful words (3+ chars) from each name
+          const hWords = pH.split(' ').filter(w=>w.length>=3);
+          const aWords = pA.split(' ').filter(w=>w.length>=3);
+          // Match if ANY meaningful word matches
+          const homeMatch = hWords.some(w=>mH.includes(w)) || mH.split(' ').filter(w=>w.length>=3).some(w=>pH.includes(w));
+          const awayMatch = aWords.some(w=>mA.includes(w)) || mA.split(' ').filter(w=>w.length>=3).some(w=>pA.includes(w));
           return homeMatch && awayMatch;
         });
         if (!fix) continue;
