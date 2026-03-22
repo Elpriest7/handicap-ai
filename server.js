@@ -209,8 +209,11 @@ async function checkResults() {
           const mA=(f.awayTeam?.shortName||f.awayTeam?.name||'').toLowerCase();
           const pH=pred.home_team.toLowerCase();
           const pA=pred.away_team.toLowerCase();
-          const homeMatch = mH.includes(pH.split(' ')[0]) || pH.includes(mH.split(' ')[0]);
-          const awayMatch = mA.includes(pA.split(' ')[0]) || pA.includes(mA.split(' ')[0]);
+          // Match using multiple word fragments for better accuracy
+          const homeMatch = mH.includes(pH.split(' ')[0]) || pH.includes(mH.split(' ')[0]) ||
+                            mH.includes(pH.split(' ')[1]||'__') || pH.split(' ').some(w=>w.length>3&&mH.includes(w));
+          const awayMatch = mA.includes(pA.split(' ')[0]) || pA.includes(mA.split(' ')[0]) ||
+                            mA.includes(pA.split(' ')[1]||'__') || pA.split(' ').some(w=>w.length>3&&mA.includes(w));
           return homeMatch && awayMatch;
         });
         if (!fix) continue;
