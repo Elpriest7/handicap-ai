@@ -68,6 +68,7 @@ main{padding:0 16px 100px;position:relative;z-index:1}
 .vs-block{text-align:center;flex-shrink:0;padding:0 10px}
 .vs-text{font-family:'Bebas Neue',sans-serif;font-size:22px;color:var(--muted);line-height:1}
 .match-time{font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:2px}
+.final-score{font-family:'Bebas Neue',sans-serif;font-size:26px;font-weight:800;color:var(--text);letter-spacing:2px;line-height:1}
 .pick-row{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between}
 .pick-left{display:flex;flex-direction:column;gap:3px}
 .pick-label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px}
@@ -288,7 +289,12 @@ function cardHTML(p) {
   <div class="match-body">
     <div class="teams">
       <div class="team"><div class="team-name">${p.home_team}</div><div style="font-size:9px;color:var(--muted);margin-bottom:2px">Last 5</div><div class="team-form" title="Last 5 league matches — left is most recent">${hf.map(f=>`<div class="fd ${f}"></div>`).join('')}</div></div>
-      <div class="vs-block"><div class="vs-text">VS</div><div class="match-time">${p.match_time||'--:--'}</div></div>
+      <div class="vs-block">
+        ${p.status!=='pending' && p.home_score!=null 
+          ? `<div class="final-score">${p.home_score} - ${p.away_score}</div><div class="match-time" style="font-size:9px">FT</div>`
+          : `<div class="vs-text">VS</div><div class="match-time">${p.match_time||'--:--'}</div>`
+        }
+      </div>
       <div class="team"><div class="team-name">${p.away_team}</div><div style="font-size:9px;color:var(--muted);margin-bottom:2px">Last 5</div><div class="team-form" title="Last 5 league matches — left is most recent">${af.map(f=>`<div class="fd ${f}"></div>`).join('')}</div></div>
     </div>
     <div class="pick-row">
