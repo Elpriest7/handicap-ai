@@ -361,6 +361,25 @@ app.get('/api/reseed', async (req,res) => {
   res.json({success:true, message:`Reseeded ${seeds.length} predictions!`, yesterday:dm1, today:d0, tomorrow:d1});
 });
 
+// Debug — see what API-Football returns for a league
+app.get('/api/debug-results', async (req, res) => {
+  if (!APIFOOTBALL_KEY) return res.json({error:'No API key'});
+  try {
+    const season = new Date().getFullYear();
+    const r = await fetch(`https://v3.football.api-sports.io/fixtures?league=39&season=${season}&last=10&status=FT`, {
+      headers: {'x-rapidapi-key': APIFOOTBALL_KEY, 'x-rapidapi-host': 'v3.football.api-sports.io'}
+    });
+    const d = await r.json();
+    const matches = (d.response||[]).map(f => ({
+      home: f.teams?.home?.name,
+      away: f.teams?.away?.name,
+      score: `${f.goals?.home}-${f.goals?.away}`,
+      date: f.fixture?.date?.split('T')[0]
+    }));
+    res.json({count: matches.length, matches});
+  } catch(e) { res.json({error: e.message}); }
+});
+
 app.get('/api/leagues', (req,res) => res.json(LEAGUES));
 app.get('/health', (req,res) => res.json({status:'ok', time:new Date().toISOString()}));
 
