@@ -16,11 +16,14 @@ const APIFOOTBALL_KEY = process.env.APIFOOTBALL_KEY || '';
 const MONGODB_URI = process.env.MONGODB_URI || '';
 
 const LEAGUES = [
-  { code:'PL',  name:'Premier League', flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿', apiId:39  },
-  { code:'PD',  name:'La Liga',        flag:'🇪🇸',        apiId:140 },
-  { code:'SA',  name:'Serie A',        flag:'🇮🇹',        apiId:135 },
-  { code:'BL1', name:'Bundesliga',     flag:'🇩🇪',        apiId:78  },
-  { code:'FL1', name:'Ligue 1',        flag:'🇫🇷',        apiId:61  },
+  { code:'PL',   name:'Premier League',     flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿', apiId:39  },
+  { code:'PD',   name:'La Liga',            flag:'🇪🇸',        apiId:140 },
+  { code:'SA',   name:'Serie A',            flag:'🇮🇹',        apiId:135 },
+  { code:'BL1',  name:'Bundesliga',         flag:'🇩🇪',        apiId:78  },
+  { code:'FL1',  name:'Ligue 1',            flag:'🇫🇷',        apiId:61  },
+  { code:'CL',   name:'Champions League',   flag:'🏆',         apiId:2   },
+  { code:'EL',   name:'Europa League',      flag:'🟠',         apiId:3   },
+  { code:'ECWC', name:'Conference League',  flag:'🟣',         apiId:848 },
 ];
 
 // ── MONGODB ───────────────────────────────────────────────────
