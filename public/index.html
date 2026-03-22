@@ -158,6 +158,9 @@ main{padding:0 16px 100px;position:relative;z-index:1}
     <button class="filter-chip" data-lg="Serie A" onclick="setLeague('Serie A',this)"><div class="dot"></div>Serie A 🇮🇹</button>
     <button class="filter-chip" data-lg="Bundesliga" onclick="setLeague('Bundesliga',this)"><div class="dot"></div>Bund. 🇩🇪</button>
     <button class="filter-chip" data-lg="Ligue 1" onclick="setLeague('Ligue 1',this)"><div class="dot"></div>Ligue1 🇫🇷</button>
+    <button class="filter-chip" data-lg="Champions League" onclick="setLeague('Champions League',this)"><div class="dot"></div>UCL 🏆</button>
+    <button class="filter-chip" data-lg="Europa League" onclick="setLeague('Europa League',this)"><div class="dot"></div>UEL 🟠</button>
+    <button class="filter-chip" data-lg="Conference League" onclick="setLeague('Conference League',this)"><div class="dot"></div>UECL 🟣</button>
   </div>
 </div>
 
@@ -247,8 +250,9 @@ async function loadPredictions(manual=false) {
 }
 
 function renderPicks(preds, container) {
+  const dayName = S.day === 'yesterday' ? 'Yesterday' : S.day === 'today' ? 'Today' : 'Tomorrow';
   if (!preds.length) {
-    container.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No Picks ${S.day==='today'?'Today':'Tomorrow'}</div><div class="empty-sub">Tap below to load predictions</div><button class="seed-btn" onclick="seedData()">🤖 Load Predictions</button></div>`;
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No Picks ${dayName}</div><div class="empty-sub">${S.day === 'yesterday' ? 'No predictions were recorded for yesterday.' : 'Tap below to load predictions'}</div>${S.day !== 'yesterday' ? `<button class="seed-btn" onclick="seedData()">🤖 Load Predictions</button>` : ''}</div>`;
     return;
   }
   const bankers = preds.filter(p=>p.is_banker);
