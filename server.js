@@ -14,6 +14,55 @@ const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 const FOOTBALL_KEY = process.env.FOOTBALL_API_KEY || '';
 const APIFOOTBALL_KEY = process.env.APIFOOTBALL_KEY || '';
 const MONGODB_URI = process.env.MONGODB_URI || '';
+const ADMIN_KEY = process.env.ADMIN_KEY || 'handicapai-admin-2026';
+
+// ── SECURITY ──────────────────────────────────────────────────
+
+// Rate limiting — max 100 requests per minute per IP
+const rateLimitMap = new Map();
+function rateLimit(req, res, next) {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const windowMs = 60000; // 1 minute
+  const maxRequests = 100;
+
+  if (!rateLimitMap.has(ip)) {
+    rateLimitMap.set(ip, { count: 1, start: now });
+    return next();
+  }
+
+  const data = rateLimitMap.get(ip);
+  if (now - data.start > windowMs) {
+    rateLimitMap.set(ip, { count: 1, start: now });
+    return next();
+  }
+
+  data.count++;
+  if (data.count > maxRequests) {
+    return res.status(429).json({ error: 'Too many requests. Please slow down.' });
+  }
+  next();
+}
+
+// Clean rate limit map every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, data] of rateLimitMap.entries()) {
+    if (now - data.start > 60000) rateLimitMap.delete(ip);
+  }
+}, 300000);
+
+// Admin key middleware — protects sensitive endpoints
+function adminAuth(req, res, next) {
+  const key = req.query.key || req.headers['x-admin-key'];
+  if (key !== ADMIN_KEY) {
+    return res.status(401).json({ error: 'Unauthorized. Admin key required.' });
+  }
+  next();
+}
+
+// Apply rate limiting to all routes
+app.use(rateLimit);
 
 const LEAGUES = [
   { code:'PL',   name:'Premier League',     flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿', apiId:39  },
@@ -342,12 +391,12 @@ app.get('/api/analytics', async (req,res) => {
   res.json({ by_league:bl, banker_rate:bk.length?Math.round(bk.filter(p=>p.status==='win').length/bk.length*100):0, banker_total:bk.length });
 });
 
-app.post('/api/trigger', async (req,res) => {
+app.post('/api/trigger', adminAuth, async (req,res) => {
   try { const n=await runDailyUpdate(); res.json({success:true,message:`Added ${n} predictions`}); }
   catch(e) { res.status(500).json({success:false,message:e.message}); }
 });
 
-app.get('/api/check-results', async (req,res) => {
+app.get('/api/check-results', adminAuth, async (req,res) => {
   try {
     const updated=await checkResults();
     const all=await dbLoad();
@@ -358,7 +407,7 @@ app.get('/api/check-results', async (req,res) => {
 });
 
 // Fresh reseed — clears ALL and reloads with today's correct dates
-app.get('/api/reseed', async (req,res) => {
+app.get('/api/reseed', adminAuth, async (req,res) => {
   await dbClearAll();
   const dm1=new Date(Date.now()-86400000).toISOString().split('T')[0];
   const d0=new Date().toISOString().split('T')[0];
@@ -400,7 +449,7 @@ app.get('/api/reseed', async (req,res) => {
 });
 
 // Debug — see what football-data.org returns for ALL leagues
-app.get('/api/debug-results', async (req, res) => {
+app.get('/api/debug-results', adminAuth, async (req, res) => {
   if (!FOOTBALL_KEY) return res.json({error:'No FOOTBALL_KEY'});
   try {
     const yesterday = new Date(Date.now()-86400000).toISOString().split('T')[0];
