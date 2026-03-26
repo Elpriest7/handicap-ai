@@ -134,7 +134,8 @@ async function fetchFixtures() {
       (d.matches||[]).forEach(m => all.push({
         id:`fd_${m.id}`, h:m.homeTeam.shortName||m.homeTeam.name,
         a:m.awayTeam.shortName||m.awayTeam.name, lg:lg.name, fl:lg.flag,
-        dt:m.utcDate.split('T')[0], tm:m.utcDate.substring(11,16)
+        dt:m.utcDate.split('T')[0], tm:m.utcDate.substring(11,16),
+        homeId: m.homeTeam.id, awayId: m.awayTeam.id
       }));
     } catch(e) { console.error('[Fixtures]', lg.code, e.message); }
     await new Promise(r=>setTimeout(r,500));
@@ -142,11 +143,82 @@ async function fetchFixtures() {
   return all;
 }
 
+// ── FETCH REAL TEAM FORM ──────────────────────────────────────
+async function fetchTeamForm(teamId, leagueCode) {
+  if (!FOOTBALL_KEY || !teamId) return null;
+  try {
+    const url = `https://api.football-data.org/v4/teams/${teamId}/matches?status=FINISHED&limit=5`;
+    const r = await fetch(url, { headers:{'X-Auth-Token':FOOTBALL_KEY} });
+    if (!r.ok) return null;
+    const d = await r.json();
+    const matches = (d.matches||[]).slice(0,5);
+    const form = matches.map(m => {
+      const isHome = m.homeTeam.id === teamId;
+      const teamScore = isHome ? m.score.fullTime.home : m.score.fullTime.away;
+      const oppScore = isHome ? m.score.fullTime.away : m.score.fullTime.home;
+      if (teamScore > oppScore) return 'W';
+      if (teamScore < oppScore) return 'L';
+      return 'D';
+    });
+    const goalsScored = matches.reduce((s,m) => {
+      const isHome = m.homeTeam.id === teamId;
+      return s + (isHome ? m.score.fullTime.home : m.score.fullTime.away);
+    }, 0);
+    const goalsConceded = matches.reduce((s,m) => {
+      const isHome = m.homeTeam.id === teamId;
+      return s + (isHome ? m.score.fullTime.away : m.score.fullTime.home);
+    }, 0);
+    const losses = form.filter(f=>f==='L').length;
+    return {
+      form: form.join(''),           // e.g. "WWDLW"
+      formStr: form.join(' '),       // e.g. "W W D L W"
+      losses,                         // number of losses in last 5
+      goalsScored,
+      goalsConceded,
+      avgScored: (goalsScored/Math.max(matches.length,1)).toFixed(1),
+      avgConceded: (goalsConceded/Math.max(matches.length,1)).toFixed(1),
+    };
+  } catch(e) {
+    console.log('[Form]', e.message);
+    return null;
+  }
+}
+
+// ── FETCH TEAM IDs FROM FIXTURE ───────────────────────────────
+async function fetchTeamIds(leagueCode, homeTeamName, awayTeamName) {
+  if (!FOOTBALL_KEY) return {homeId: null, awayId: null};
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const threeDays = new Date(Date.now()+3*86400000).toISOString().split('T')[0];
+    const url = `https://api.football-data.org/v4/competitions/${leagueCode}/matches?dateFrom=${today}&dateTo=${threeDays}&status=SCHEDULED`;
+    const r = await fetch(url, { headers:{'X-Auth-Token':FOOTBALL_KEY} });
+    if (!r.ok) return {homeId: null, awayId: null};
+    const d = await r.json();
+    const match = (d.matches||[]).find(m => {
+      const mH = (m.homeTeam.shortName||m.homeTeam.name||'').toLowerCase();
+      const mA = (m.awayTeam.shortName||m.awayTeam.name||'').toLowerCase();
+      const pH = homeTeamName.toLowerCase();
+      const pA = awayTeamName.toLowerCase();
+      return (mH.includes(pH.split(' ')[0])||pH.includes(mH.split(' ')[0])) &&
+             (mA.includes(pA.split(' ')[0])||pA.includes(mA.split(' ')[0]));
+    });
+    if (!match) return {homeId: null, awayId: null};
+    return {homeId: match.homeTeam.id, awayId: match.awayTeam.id};
+  } catch(e) { return {homeId: null, awayId: null}; }
+}
+
 // ── GEMINI ────────────────────────────────────────────────────
-async function askGemini(home, away, league) {
+async function askGemini(home, away, league, homeForm=null, awayForm=null) {
   if (!GEMINI_KEY) return null;
   try {
+    const homeFormStr = homeForm ? `REAL DATA — ${home} last 5 results: ${homeForm.formStr} | Goals scored: ${homeForm.avgScored}/game | Goals conceded: ${homeForm.avgConceded}/game | Losses in last 5: ${homeForm.losses}` : `No real form data available for ${home}`;
+    const awayFormStr = awayForm ? `REAL DATA — ${away} last 5 results: ${awayForm.formStr} | Goals scored: ${awayForm.avgScored}/game | Goals conceded: ${awayForm.avgConceded}/game | Losses in last 5: ${awayForm.losses}` : `No real form data available for ${away}`;
+
     const prompt = `You are a strict European Handicap betting analyst. Analyze: ${home} vs ${away} (${league}).
+
+REAL LIVE FORM DATA (use this — do NOT ignore):
+${homeFormStr}
+${awayFormStr}
 
 HOW EUROPEAN HANDICAP WORKS:
 The FAVORITE gets a goal head start BEFORE the match starts.
@@ -156,40 +228,34 @@ The FAVORITE gets a goal head start BEFORE the match starts.
 
 THE MOST IMPORTANT QUESTION TO ASK:
 "Even with this head start, can this team AVOID LOSING?"
-Do NOT focus on big wins. Focus on LOW LOSS RATE and CONSISTENCY.
+Focus on LOW LOSS RATE and CONSISTENCY — not big wins.
 
 STRICT SKIP RULES — Skip immediately if ANY apply:
-❌ Favorite has lost 2 or more of their last 5 matches — SKIP NO EXCEPTIONS
+❌ Favorite has lost 2 or more of their last 5 matches (CHECK REAL DATA ABOVE) — SKIP NO EXCEPTIONS
 ❌ Favorite has been inconsistent — winning one, losing one pattern — SKIP
-❌ Match looks "too easy" but favorite has recent bad form — this is a TRAP — SKIP
-❌ Opponent is defensively strong (concedes less than 1 goal per game) — SKIP
-❌ Low motivation match for the favorite — SKIP
-❌ Match is genuinely unpredictable or evenly matched — SKIP
-❌ Odds below 1.35 — no value — SKIP
+❌ Match looks "too easy" but real form shows recent losses — this is a TRAP — SKIP
+❌ Opponent concedes less than 1 goal per game on average — SKIP
+❌ Low motivation match — SKIP
+❌ Odds below 1.35 — SKIP
 
-ONLY PICK if ALL of these are true:
-✅ Favorite has lost 0 or 1 of their last 5 matches — RARELY LOSES
-✅ Favorite is consistent — not up and down — steady performer
-✅ Opponent is weak, poor form, or struggling away from home
-✅ H2H history strongly favors the favorite
-✅ Probability genuinely 70% or higher
-✅ Even if the match is close, the head start protects the bet
+ONLY PICK if ALL apply:
+✅ Favorite lost 0 or 1 of last 5 (verify with REAL DATA above)
+✅ Favorite is consistent and reliable
+✅ Opponent is weak or struggling
+✅ H2H history favors the favorite
+✅ Probability genuinely 70%+
 
-HANDICAP SELECTION — Based on ODDS and FORM:
-- Odds 1.80 to 2.50: Pick H2 or H3 — head start protects even a close game
-- Odds 1.40 to 1.79: Pick H1 — team is so consistent they simply will not lose
-- Odds below 1.40: Pick H1 BANKER — near certain, maximum safety
+HANDICAP BASED ON ODDS:
+- Odds 1.80 to 2.50: Pick H2 or H3
+- Odds 1.40 to 1.79: Pick H1
+- Odds below 1.40: Pick H1 BANKER
 
-BANKER RULE — Very strict:
-- Banker = 85% probability or above ONLY
-- If only 2 qualify as bankers today — show only 2. Never force more.
-- A forced banker destroys trust. Quality over quantity always.
-- Ask: "Would I bet my own money on this as a banker?" If any doubt — NOT a banker.
+BANKER: 85%+ probability only. Never force bankers.
 
-Reply ONLY valid JSON (no markdown, no extra text):
-{"fav":"exact team name","h":"H2","prob":78,"banker":false,"odds":2.10,"hf":"WWWDW","af":"LLDLL","h2h":"6W-2D-2L last 8","tips":["Favorite lost 0 of last 5","Opponent lost 4 of last 5 away","H2H: never lost by 2+ in last 7 meetings"],"writeup":"H2H: [specific record]. Last 5 form: [favorite team] — W W W D W [brief comment]. [Opponent] — L L D L L [brief comment]. [Why the head start makes this safe]."}
+Reply ONLY valid JSON:
+{"fav":"exact team name","h":"H2","prob":78,"banker":false,"odds":2.10,"hf":"${homeForm?.form||'WWDLW'}","af":"${awayForm?.form||'LWLLL'}","h2h":"H2H record","tips":["Real form reason","Opponent weakness","H2H insight"],"writeup":"H2H: [specific record]. Last 5 form: ${home} — ${homeForm?.formStr||'unknown'} (${homeForm?.losses||'?'} losses). ${away} — ${awayForm?.formStr||'unknown'} (${awayForm?.losses||'?'} losses). [Why the handicap makes this safe]."}
 
-If match fails ANY rule above, reply ONLY: {"skip":true}`;
+If fails ANY rule: {"skip":true}`;
 
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -216,10 +282,34 @@ async function runDailyUpdate() {
   let added = 0;
   for (const f of fixtures) {
     if (existingIds.has(f.id)) continue;
-    const ai = await askGemini(f.h, f.a, f.lg);
+
+    // Fetch real team form from football-data.org
+    const lg = LEAGUES.find(l=>l.name===f.lg);
+    let homeForm = null, awayForm = null;
+    if (lg && f.homeId && f.awayId) {
+      console.log(`[Form] Fetching real form for ${f.h} vs ${f.a}...`);
+      [homeForm, awayForm] = await Promise.all([
+        fetchTeamForm(f.homeId, lg.code),
+        fetchTeamForm(f.awayId, lg.code)
+      ]);
+      await new Promise(r=>setTimeout(r,500));
+    }
+
+    // Skip if favorite lost 2+ of last 5 (pre-filter before calling Gemini)
+    if (homeForm && homeForm.losses >= 2) {
+      console.log(`[Skip] ${f.h} lost ${homeForm.losses} of last 5 — skipping`);
+    }
+    if (awayForm && awayForm.losses >= 2) {
+      console.log(`[Skip] ${f.a} lost ${awayForm.losses} of last 5 — skipping`);
+    }
+
+    const ai = await askGemini(f.h, f.a, f.lg, homeForm, awayForm);
     if (!ai) continue;
     const hcap = ai.h||'H1';
     const fav = ai.fav||f.h;
+    // Use real form data for dots if available
+    const hf = homeForm?.form || ai.hf || 'WWDLW';
+    const af = awayForm?.form || ai.af || 'LWLLL';
     const pred = {
       match_id:f.id, date:f.dt, league:f.lg, league_flag:f.fl,
       home_team:f.h, away_team:f.a, favorite:fav, handicap:hcap,
@@ -227,13 +317,13 @@ async function runDailyUpdate() {
       win_condition:hcap==='H1'?'Starts +1 up, wins unless they lose':hcap==='H2'?'Starts +2 up, wins unless lose by 2+':'Starts +3 up, wins unless lose by 3+',
       probability:ai.prob, is_banker:(ai.banker && ai.prob>=85)?1:0, bookmaker:'Bet9ja',
       odds:ai.odds||1.75, status:'pending', home_score:null, away_score:null,
-      home_form:ai.hf||'WWDLW', away_form:ai.af||'LWLLL',
+      home_form:hf, away_form:af,
       h2h_summary:ai.h2h||'', insights:ai.tips||[], writeup:ai.writeup||'',
       match_time:f.tm, created_at:new Date().toISOString()
     };
     await dbUpsert(pred);
     added++;
-    console.log(`[+] ${fav} ${hcap} ${ai.prob}% — ${f.h} vs ${f.a}`);
+    console.log(`[+] ${fav} ${hcap} ${ai.prob}% — ${f.h} vs ${f.a} (Form: ${hf} vs ${af})`);
     await new Promise(r=>setTimeout(r,1200));
   }
   console.log(`[CRON] Done. Added ${added}.`);
