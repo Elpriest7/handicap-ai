@@ -137,6 +137,7 @@ main{padding:0 16px 100px;position:relative;z-index:1}
     <div class="stat-pill"><div class="val gold" id="st-bank">0</div><div class="lbl">Bankers</div></div>
     <div class="stat-pill"><div class="val blue" id="st-wr">0%</div><div class="lbl">Win Rate</div></div>
     <div class="stat-pill"><div class="val orange" id="st-ap">0%</div><div class="lbl">Avg Prob</div></div>
+    <div class="stat-pill"><div class="val" id="st-streak" style="color:#a78bfa">--</div><div class="lbl">Streak</div></div>
   </div>
 </div>
 
@@ -280,11 +281,12 @@ function cardHTML(p) {
   const col = p.is_banker ? '#ffc837' : '#00e5a0';
   const sb = p.status==='win' ? '<span class="badge win">WIN ✓</span>' : p.status==='loss' ? '<span class="badge loss">LOSS ✗</span>' : '<span class="badge pending">PENDING</span>';
   const bk = p.is_banker ? '<span class="badge banker-badge">⭐ BANKER</span>' : '';
+  const valueRating = p.value_rating > 0 ? `<span class="badge" style="background:rgba(0,229,160,.15);color:var(--accent);border:1px solid var(--accent)">+${p.value_rating}% VALUE</span>` : '';
   const sub = p.status!=='pending' && p.home_score!=null ? `${p.home_score}-${p.away_score} ${p.status==='win'?'✓':'✗'}` : p.win_condition||'';
   return `<div class="card ${p.is_banker?'banker':''}">
   <div class="card-head">
     <div class="league-badge"><span style="font-size:14px">${p.league_flag||'⚽'}</span><span class="league-name">${p.league}</span></div>
-    <div class="card-badges"><span class="badge bookie">${p.bookmaker||'Bet9ja'}</span>${bk}${sb}</div>
+    <div class="card-badges"><span class="badge bookie">${p.bookmaker||'Bet9ja'}</span>${bk}${valueRating}${sb}</div>
   </div>
   <div class="match-body">
     <div class="teams">
@@ -326,6 +328,11 @@ async function loadStats() {
     document.getElementById('st-bank').textContent = s.today_bankers;
     document.getElementById('st-wr').textContent = s.win_rate + '%';
     document.getElementById('st-ap').textContent = s.avg_prob + '%';
+    if (s.current_streak > 0) {
+      const streakEl = document.getElementById('st-streak');
+      streakEl.textContent = s.current_streak + (s.streak_type==='win' ? 'W 🔥' : 'L ❄️');
+      streakEl.style.color = s.streak_type==='win' ? 'var(--win)' : 'var(--lose)';
+    }
     document.getElementById('a-wr').textContent = s.win_rate + '%';
     document.getElementById('a-total').textContent = s.total_predictions;
   } catch(e){}
