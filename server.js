@@ -144,39 +144,60 @@ async function fetchFixtures() {
 }
 
 // ── FETCH REAL TEAM FORM ──────────────────────────────────────
-async function fetchTeamForm(teamId, leagueCode) {
+async function fetchTeamForm(teamId, isHomeTeam) {
   if (!FOOTBALL_KEY || !teamId) return null;
   try {
-    const url = `https://api.football-data.org/v4/teams/${teamId}/matches?status=FINISHED&limit=5`;
+    const url = `https://api.football-data.org/v4/teams/${teamId}/matches?status=FINISHED&limit=10`;
     const r = await fetch(url, { headers:{'X-Auth-Token':FOOTBALL_KEY} });
     if (!r.ok) return null;
     const d = await r.json();
-    const matches = (d.matches||[]).slice(0,5);
-    const form = matches.map(m => {
-      const isHome = m.homeTeam.id === teamId;
-      const teamScore = isHome ? m.score.fullTime.home : m.score.fullTime.away;
-      const oppScore = isHome ? m.score.fullTime.away : m.score.fullTime.home;
-      if (teamScore > oppScore) return 'W';
-      if (teamScore < oppScore) return 'L';
-      return 'D';
-    });
-    const goalsScored = matches.reduce((s,m) => {
+    const allMatches = d.matches || [];
+
+    // Split into home and away matches
+    const homeMatches = allMatches.filter(m => m.homeTeam.id === teamId).slice(0,5);
+    const awayMatches = allMatches.filter(m => m.awayTeam.id === teamId).slice(0,5);
+    const last5 = allMatches.slice(0,5);
+
+    const getResult = (m, id) => {
+      const isHome = m.homeTeam.id === id;
+      const ts = isHome ? m.score.fullTime.home : m.score.fullTime.away;
+      const os = isHome ? m.score.fullTime.away : m.score.fullTime.home;
+      return ts > os ? 'W' : ts < os ? 'L' : 'D';
+    };
+
+    const overallForm = last5.map(m => getResult(m, teamId));
+    const homeForm = homeMatches.map(m => getResult(m, teamId));
+    const awayForm = awayMatches.map(m => getResult(m, teamId));
+
+    // Use relevant form based on whether team is playing at home or away
+    const relevantForm = isHomeTeam ? homeForm : awayForm;
+    const relevantMatches = isHomeTeam ? homeMatches : awayMatches;
+
+    const goalsScored = relevantMatches.reduce((s,m) => {
       const isHome = m.homeTeam.id === teamId;
       return s + (isHome ? m.score.fullTime.home : m.score.fullTime.away);
     }, 0);
-    const goalsConceded = matches.reduce((s,m) => {
+    const goalsConceded = relevantMatches.reduce((s,m) => {
       const isHome = m.homeTeam.id === teamId;
       return s + (isHome ? m.score.fullTime.away : m.score.fullTime.home);
     }, 0);
-    const losses = form.filter(f=>f==='L').length;
+
+    const count = Math.max(relevantMatches.length, 1);
+    const losses = relevantForm.filter(f=>f==='L').length;
+
     return {
-      form: form.join(''),           // e.g. "WWDLW"
-      formStr: form.join(' '),       // e.g. "W W D L W"
-      losses,                         // number of losses in last 5
+      form: overallForm.join(''),
+      formStr: overallForm.join(' '),
+      homeForm: homeForm.join(''),
+      awayForm: awayForm.join(''),
+      relevantForm: relevantForm.join(''),
+      relevantFormStr: relevantForm.join(' '),
+      losses,
       goalsScored,
       goalsConceded,
-      avgScored: (goalsScored/Math.max(matches.length,1)).toFixed(1),
-      avgConceded: (goalsConceded/Math.max(matches.length,1)).toFixed(1),
+      avgScored: (goalsScored/count).toFixed(1),
+      avgConceded: (goalsConceded/count).toFixed(1),
+      venue: isHomeTeam ? 'home' : 'away',
     };
   } catch(e) {
     console.log('[Form]', e.message);
@@ -211,8 +232,19 @@ async function fetchTeamIds(leagueCode, homeTeamName, awayTeamName) {
 async function askGemini(home, away, league, homeForm=null, awayForm=null) {
   if (!GEMINI_KEY) return null;
   try {
-    const homeFormStr = homeForm ? `REAL DATA — ${home} last 5 results: ${homeForm.formStr} | Goals scored: ${homeForm.avgScored}/game | Goals conceded: ${homeForm.avgConceded}/game | Losses in last 5: ${homeForm.losses}` : `No real form data available for ${home}`;
-    const awayFormStr = awayForm ? `REAL DATA — ${away} last 5 results: ${awayForm.formStr} | Goals scored: ${awayForm.avgScored}/game | Goals conceded: ${awayForm.avgConceded}/game | Losses in last 5: ${awayForm.losses}` : `No real form data available for ${away}`;
+    const homeFormStr = homeForm
+      ? `REAL DATA — ${home} (playing at HOME):
+         Last 5 HOME results: ${homeForm.homeForm||homeForm.form} | Overall last 5: ${homeForm.formStr}
+         Home goals scored: ${homeForm.avgScored}/game | Home goals conceded: ${homeForm.avgConceded}/game
+         Home losses in last 5 home games: ${homeForm.losses}`
+      : `No real form data for ${home}`;
+
+    const awayFormStr = awayForm
+      ? `REAL DATA — ${away} (playing AWAY):
+         Last 5 AWAY results: ${awayForm.awayForm||awayForm.form} | Overall last 5: ${awayForm.formStr}
+         Away goals scored: ${awayForm.avgScored}/game | Away goals conceded: ${awayForm.avgConceded}/game
+         Away losses in last 5 away games: ${awayForm.losses}`
+      : `No real form data for ${away}`;
 
     const prompt = `You are a strict European Handicap betting analyst. Analyze: ${home} vs ${away} (${league}).
 
@@ -235,8 +267,10 @@ STRICT SKIP RULES — Skip immediately if ANY apply:
 ❌ Favorite has been inconsistent — winning one, losing one pattern — SKIP
 ❌ Match looks "too easy" but real form shows recent losses — this is a TRAP — SKIP
 ❌ Opponent concedes less than 1 goal per game on average — SKIP
-❌ Low motivation match — SKIP
+❌ Low motivation match — team is mid-table, safe, nothing to play for — SKIP
+❌ Team is already relegated or already champions with nothing left to prove — SKIP
 ❌ Odds below 1.35 — SKIP
+❌ Derby or high-emotion match where form goes out the window — be extra careful
 
 ONLY PICK if ALL apply:
 ✅ Favorite lost 0 or 1 of last 5 (verify with REAL DATA above)
@@ -283,14 +317,13 @@ async function runDailyUpdate() {
   for (const f of fixtures) {
     if (existingIds.has(f.id)) continue;
 
-    // Fetch real team form from football-data.org
-    const lg = LEAGUES.find(l=>l.name===f.lg);
+    // Fetch real home/away specific form
     let homeForm = null, awayForm = null;
-    if (lg && f.homeId && f.awayId) {
+    if (f.homeId && f.awayId) {
       console.log(`[Form] Fetching real form for ${f.h} vs ${f.a}...`);
       [homeForm, awayForm] = await Promise.all([
-        fetchTeamForm(f.homeId, lg.code),
-        fetchTeamForm(f.awayId, lg.code)
+        fetchTeamForm(f.homeId, true),   // home team playing at HOME
+        fetchTeamForm(f.awayId, false)   // away team playing AWAY
       ]);
       await new Promise(r=>setTimeout(r,500));
     }
@@ -318,6 +351,7 @@ async function runDailyUpdate() {
       probability:ai.prob, is_banker:(ai.banker && ai.prob>=85)?1:0, bookmaker:'Bet9ja',
       odds:ai.odds||1.75, status:'pending', home_score:null, away_score:null,
       home_form:hf, away_form:af,
+      value_rating: Math.round(((ai.prob/100) * (ai.odds||1.75) - 1) * 100), // Expected value %
       h2h_summary:ai.h2h||'', insights:ai.tips||[], writeup:ai.writeup||'',
       match_time:f.tm, created_at:new Date().toISOString()
     };
@@ -453,11 +487,28 @@ app.get('/api/stats', async (req,res) => {
   const tp = all.filter(p=>p.date===today);
   const done = all.filter(p=>p.status==='win'||p.status==='loss');
   const wins = done.filter(p=>p.status==='win').length;
+
+  // Calculate current streak
+  const sorted = [...done].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  let streak = 0, streakType = '';
+  for (const p of sorted) {
+    if (!streakType) streakType = p.status;
+    if (p.status === streakType) streak++;
+    else break;
+  }
+
+  // Calculate value picks (positive expected value)
+  const valuePicks = tp.filter(p => p.value_rating > 0).length;
+
   res.json({
-    today_picks:tp.length, today_bankers:tp.filter(p=>p.is_banker).length,
+    today_picks:tp.length,
+    today_bankers:tp.filter(p=>p.is_banker).length,
     win_rate:done.length?Math.round(wins/done.length*100):0,
     avg_prob:tp.length?Math.round(tp.reduce((s,p)=>s+p.probability,0)/tp.length):0,
-    total_predictions:done.length
+    total_predictions:done.length,
+    current_streak: streak,
+    streak_type: streakType,
+    value_picks: valuePicks,
   });
 });
 
