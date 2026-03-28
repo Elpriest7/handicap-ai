@@ -125,7 +125,7 @@ main{padding:0 16px 100px;position:relative;z-index:1}
     <div class="header-right">
       <span class="last-updated" id="lu">--:--</span>
       <button class="hbtn accent" id="rbtn" onclick="loadPredictions(true)">↻</button>
-      <button class="hbtn" onclick="showToast('🔔 Notifications on!')">🔔<div class="notif-dot" id="ndot"></div></button>
+      <button class="hbtn" id="notif-btn" onclick="toggleNotifications()">🔔<div class="notif-dot" id="ndot"></div></button>
       <button class="hbtn" onclick="openCfg()">⚙️</button>
     </div>
   </div>
@@ -413,9 +413,80 @@ function openCfg() {
   if (url) { localStorage.setItem('backend', url.trim().replace(/\/$/,'')); location.reload(); }
 }
 
+// ── PUSH NOTIFICATIONS ───────────────────────────────────────
+let pushSubscribed = false;
+
+async function toggleNotifications() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    showToast('❌ Push notifications not supported on this browser');
+    return;
+  }
+  if (pushSubscribed) {
+    // Unsubscribe
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      await sub.unsubscribe();
+      await fetch(BACKEND + '/api/unsubscribe', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ endpoint: sub.endpoint })
+      });
+    }
+    pushSubscribed = false;
+    document.getElementById('notif-btn').style.opacity = '0.5';
+    showToast('🔕 Notifications turned off');
+    return;
+  }
+  try {
+    // Request permission
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      showToast('❌ Please allow notifications in your browser settings');
+      return;
+    }
+    // Get VAPID public key
+    const keyRes = await fetch(BACKEND + '/api/vapid-public-key');
+    const { publicKey } = await keyRes.json();
+    // Register service worker
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    // Subscribe
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: publicKey
+    });
+    // Save subscription to server
+    await fetch(BACKEND + '/api/subscribe', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(sub)
+    });
+    pushSubscribed = true;
+    document.getElementById('notif-btn').style.opacity = '1';
+    document.getElementById('ndot').style.display = 'block';
+    showToast('✅ You will be notified when new banker picks arrive!');
+  } catch(e) {
+    showToast('❌ Could not enable notifications: ' + e.message);
+  }
+}
+
+// Check if already subscribed on load
+async function checkNotificationStatus() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration('/sw.js');
+    if (!reg) return;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      pushSubscribed = true;
+      document.getElementById('ndot').style.display = 'block';
+    }
+  } catch(e) {}
+}
+
 // ── INIT ─────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   loadPredictions();
+  checkNotificationStatus();
   setTimeout(() => showToast('🏆 HandicapAI Live!'), 1000);
 
   // Auto-refresh every 20 minutes to catch result updates
