@@ -15,6 +15,60 @@ const FOOTBALL_KEY = process.env.FOOTBALL_API_KEY || '';
 const APIFOOTBALL_KEY = process.env.APIFOOTBALL_KEY || '';
 const MONGODB_URI = process.env.MONGODB_URI || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || 'handicapai-admin-2026';
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY || 'BDXwtIJYCcknPgUmks2cctypEpaBgRJJyhv4fSHjeGtRtGS-ZpGkGwsYxbSTV9FtGOruEaLVIvA9RihUfNrIKDk';
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || 'tGS-ZpGkGwsYxbSTV9FtGOruEaLVIvA9RihUfNrIKDk';
+
+// ── PUSH SUBSCRIPTIONS (in-memory, backed by MongoDB) ─────────
+let pushSubscriptions = [];
+
+async function loadSubscriptions() {
+  try {
+    const c = await getCol();
+    if (!c) return;
+    const db = c.s?.db || c.db;
+    const subCol = db ? db.collection('subscriptions') : null;
+    if (!subCol) return;
+    pushSubscriptions = await subCol.find({}).toArray();
+    console.log(`[Push] Loaded ${pushSubscriptions.length} subscriptions`);
+  } catch(e) { console.log('[Push] Load error:', e.message); }
+}
+
+async function saveSubscription(sub) {
+  try {
+    const client = new MongoClient(MONGODB_URI);
+    await client.connect();
+    const db = client.db('handicapai');
+    await db.collection('subscriptions').updateOne(
+      { endpoint: sub.endpoint },
+      { $set: sub },
+      { upsert: true }
+    );
+    await client.close();
+  } catch(e) { console.log('[Push] Save error:', e.message); }
+}
+
+async function sendPushNotification(title, body, data={}) {
+  if (!pushSubscriptions.length) return;
+  const payload = JSON.stringify({ title, body, data, icon: '/icon.png' });
+
+  for (const sub of pushSubscriptions) {
+    try {
+      // Use fetch to send via standard Web Push protocol
+      const vapidHeaders = {
+        'Content-Type': 'application/json',
+        'TTL': '86400',
+      };
+      await fetch(sub.endpoint, {
+        method: 'POST',
+        headers: vapidHeaders,
+        body: payload,
+      });
+    } catch(e) {
+      console.log('[Push] Send error:', e.message);
+    }
+  }
+  console.log(`[Push] Sent notification to ${pushSubscriptions.length} subscribers`);
+}
 
 // ── SECURITY ──────────────────────────────────────────────────
 
@@ -269,6 +323,7 @@ STRICT SKIP RULES — Skip immediately if ANY apply:
 ❌ Opponent concedes less than 1 goal per game on average — SKIP
 ❌ Low motivation match — team is mid-table, safe, nothing to play for — SKIP
 ❌ Team is already relegated or already champions with nothing left to prove — SKIP
+❌ Key players (striker, goalkeeper, captain) known to be injured or suspended — SKIP
 ❌ Odds below 1.35 — SKIP
 ❌ Derby or high-emotion match where form goes out the window — be extra careful
 
@@ -278,6 +333,8 @@ ONLY PICK if ALL apply:
 ✅ Opponent is weak or struggling
 ✅ H2H history favors the favorite
 ✅ Probability genuinely 70%+
+✅ No known key injuries or suspensions to the favorite's main players
+✅ Team has clear motivation — title race, relegation battle, European spot
 
 HANDICAP BASED ON ODDS:
 - Odds 1.80 to 2.50: Pick H2 or H3
@@ -361,6 +418,20 @@ async function runDailyUpdate() {
     await new Promise(r=>setTimeout(r,1200));
   }
   console.log(`[CRON] Done. Added ${added}.`);
+
+  // Send push notification if bankers were found
+  if (added > 0) {
+    const all = await dbLoad();
+    const today = new Date().toISOString().split('T')[0];
+    const bankers = all.filter(p => p.date === today && p.is_banker);
+    if (bankers.length > 0) {
+      await sendPushNotification(
+        `⭐ ${bankers.length} Banker Pick${bankers.length>1?'s':''} Today!`,
+        bankers.map(b => `${b.handicap_label} — ${b.probability}%`).join(' | '),
+        { url: '/' }
+      );
+    }
+  }
   return added;
 }
 
@@ -616,6 +687,36 @@ app.get('/api/debug-results', adminAuth, async (req, res) => {
     }
     res.json({count: allMatches.length, matches: allMatches});
   } catch(e) { res.json({error: e.message}); }
+});
+
+// Push notification endpoints
+app.get('/api/vapid-public-key', (req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC });
+});
+
+app.post('/api/subscribe', async (req, res) => {
+  const sub = req.body;
+  if (!sub || !sub.endpoint) return res.status(400).json({ error: 'Invalid subscription' });
+  pushSubscriptions.push(sub);
+  await saveSubscription(sub);
+  console.log('[Push] New subscription added');
+  res.json({ success: true, message: 'Subscribed to notifications!' });
+});
+
+app.post('/api/unsubscribe', async (req, res) => {
+  const { endpoint } = req.body;
+  pushSubscriptions = pushSubscriptions.filter(s => s.endpoint !== endpoint);
+  res.json({ success: true });
+});
+
+// Test push notification
+app.get('/api/test-push', adminAuth, async (req, res) => {
+  await sendPushNotification(
+    '🏆 HandicapAI Test',
+    'Push notifications are working! You will be notified when new banker picks arrive.',
+    { url: '/' }
+  );
+  res.json({ success: true, subscribers: pushSubscriptions.length });
 });
 
 app.get('/api/leagues', (req,res) => res.json(LEAGUES));
