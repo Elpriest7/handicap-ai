@@ -15,8 +15,8 @@ const FOOTBALL_KEY = process.env.FOOTBALL_API_KEY || '';
 const APIFOOTBALL_KEY = process.env.APIFOOTBALL_KEY || '';
 const MONGODB_URI = process.env.MONGODB_URI || '';
 const ADMIN_KEY = process.env.ADMIN_KEY || 'handicapai-admin-2026';
-const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY || 'BDXwtIJYCcknPgUmks2cctypEpaBgRJJyhv4fSHjeGtRtGS-ZpGkGwsYxbSTV9FtGOruEaLVIvA9RihUfNrIKDk';
-const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || 'tGS-ZpGkGwsYxbSTV9FtGOruEaLVIvA9RihUfNrIKDk';
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY || 'BGNAxZTkor5Yqo218wOPCyQtfS2V9jcygYxtfXwDYFIndgbLtADj_Br9i_k02oS1Akw1O9_xoW_7AoAqvHkidy0';
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || 'gJ_A_ZLTqu8Nn43xkYzqA49lldkQiUUGZOhfAgCBeT8';
 
 // ── PUSH SUBSCRIPTIONS (in-memory, backed by MongoDB) ─────────
 let pushSubscriptions = [];
