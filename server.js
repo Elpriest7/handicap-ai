@@ -603,6 +603,10 @@ app.get('/api/analytics', async (req,res) => {
   res.json({ by_league:bl, banker_rate:bk.length?Math.round(bk.filter(p=>p.status==='win').length/bk.length*100):0, banker_total:bk.length });
 });
 
+app.get('/api/trigger', adminAuth, async (req,res) => {
+  try { const n=await runDailyUpdate(); res.json({success:true,message:`Added ${n} predictions`}); }
+  catch(e) { res.json({success:false,error:e.message}); }
+});
 app.post('/api/trigger', adminAuth, async (req,res) => {
   try { const n=await runDailyUpdate(); res.json({success:true,message:`Added ${n} predictions`}); }
   catch(e) { res.status(500).json({success:false,message:e.message}); }
