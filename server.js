@@ -353,7 +353,7 @@ If fails ANY rule: {"skip":true}`;
 
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.1,maxOutputTokens:250} })
+      body:JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.1,maxOutputTokens:500} })
     });
     const d = await r.json();
     const txt = d.candidates?.[0]?.content?.parts?.[0]?.text||'';
@@ -373,34 +373,35 @@ async function runDailyUpdate() {
   const existing = await dbLoad();
   const existingIds = new Set(existing.map(p=>p.match_id));
   const fixtures = await fetchFixtures();
+  console.log(`[CRON] Found ${fixtures.length} upcoming fixtures`);
   let added = 0;
   for (const f of fixtures) {
-    if (existingIds.has(f.id)) continue;
+    if (existingIds.has(f.id)) { console.log(`[Skip] Already exists: ${f.h} vs ${f.a}`); continue; }
 
     // Fetch real home/away specific form
     let homeForm = null, awayForm = null;
-    if (f.homeId && f.awayId) {
-      console.log(`[Form] Fetching real form for ${f.h} vs ${f.a}...`);
-      [homeForm, awayForm] = await Promise.all([
-        fetchTeamForm(f.homeId, true),   // home team playing at HOME
-        fetchTeamForm(f.awayId, false)   // away team playing AWAY
-      ]);
-      await new Promise(r=>setTimeout(r,500));
+    try {
+      if (f.homeId && f.awayId) {
+        [homeForm, awayForm] = await Promise.all([
+          fetchTeamForm(f.homeId, true),
+          fetchTeamForm(f.awayId, false)
+        ]);
+        await new Promise(r=>setTimeout(r,300));
+      }
+    } catch(e) { console.log(`[Form] Error for ${f.h} vs ${f.a}:`, e.message); }
+
+    // Pre-filter — skip if favorite lost 2+ of last 5
+    if (homeForm && homeForm.losses >= 2 && awayForm && awayForm.losses >= 2) {
+      console.log(`[Skip] Both teams poor form — ${f.h} vs ${f.a}`);
+      continue;
     }
 
-    // Skip if favorite lost 2+ of last 5 (pre-filter before calling Gemini)
-    if (homeForm && homeForm.losses >= 2) {
-      console.log(`[Skip] ${f.h} lost ${homeForm.losses} of last 5 — skipping`);
-    }
-    if (awayForm && awayForm.losses >= 2) {
-      console.log(`[Skip] ${f.a} lost ${awayForm.losses} of last 5 — skipping`);
-    }
-
+    console.log(`[Gemini] Analyzing ${f.h} vs ${f.a} (${f.lg})...`);
     const ai = await askGemini(f.h, f.a, f.lg, homeForm, awayForm);
-    if (!ai) continue;
+    if (!ai) { console.log(`[Skip] Gemini skipped ${f.h} vs ${f.a}`); continue; }
+
     const hcap = ai.h||'H1';
     const fav = ai.fav||f.h;
-    // Use real form data for dots if available
     const hf = homeForm?.form || ai.hf || 'WWDLW';
     const af = awayForm?.form || ai.af || 'LWLLL';
     const pred = {
@@ -411,14 +412,14 @@ async function runDailyUpdate() {
       probability:ai.prob, is_banker:(ai.banker && ai.prob>=85)?1:0, bookmaker:'Bet9ja',
       odds:ai.odds||1.75, status:'pending', home_score:null, away_score:null,
       home_form:hf, away_form:af,
-      value_rating: Math.round(((ai.prob/100) * (ai.odds||1.75) - 1) * 100), // Expected value %
+      value_rating: Math.round(((ai.prob/100) * (ai.odds||1.75) - 1) * 100),
       h2h_summary:ai.h2h||'', insights:ai.tips||[], writeup:ai.writeup||'',
       match_time:f.tm, created_at:new Date().toISOString()
     };
     await dbUpsert(pred);
     added++;
-    console.log(`[+] ${fav} ${hcap} ${ai.prob}% — ${f.h} vs ${f.a} (Form: ${hf} vs ${af})`);
-    await new Promise(r=>setTimeout(r,1200));
+    console.log(`[+] ${fav} ${hcap} ${ai.prob}% — ${f.h} vs ${f.a}`);
+    await new Promise(r=>setTimeout(r,1000));
   }
   console.log(`[CRON] Done. Added ${added}.`);
 
