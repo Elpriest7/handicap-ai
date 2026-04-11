@@ -177,20 +177,23 @@ async function dbClearAll() {
 async function fetchFixtures() {
   if (!FOOTBALL_KEY) return [];
   const today = new Date().toISOString().split('T')[0];
-  const threeDays = new Date(Date.now()+3*86400000).toISOString().split('T')[0];
+  const sevenDays = new Date(Date.now()+7*86400000).toISOString().split('T')[0];
   const all = [];
   for (const lg of LEAGUES) {
     try {
-      const url = `https://api.football-data.org/v4/competitions/${lg.code}/matches?dateFrom=${today}&dateTo=${threeDays}&status=SCHEDULED`;
+      // Fetch both SCHEDULED and TIMED matches for next 7 days
+      const url = `https://api.football-data.org/v4/competitions/${lg.code}/matches?dateFrom=${today}&dateTo=${sevenDays}`;
       const r = await fetch(url, { headers:{'X-Auth-Token':FOOTBALL_KEY} });
-      if (!r.ok) continue;
+      if (!r.ok) { console.log(`[Fixtures] ${lg.code} error:`, r.status); continue; }
       const d = await r.json();
-      (d.matches||[]).forEach(m => all.push({
+      const matches = (d.matches||[]).filter(m => ['SCHEDULED','TIMED'].includes(m.status));
+      matches.forEach(m => all.push({
         id:`fd_${m.id}`, h:m.homeTeam.shortName||m.homeTeam.name,
         a:m.awayTeam.shortName||m.awayTeam.name, lg:lg.name, fl:lg.flag,
         dt:m.utcDate.split('T')[0], tm:m.utcDate.substring(11,16),
         homeId: m.homeTeam.id, awayId: m.awayTeam.id
       }));
+      console.log(`[Fixtures] ${lg.code}: ${matches.length} upcoming matches`);
     } catch(e) { console.error('[Fixtures]', lg.code, e.message); }
     await new Promise(r=>setTimeout(r,500));
   }
@@ -721,6 +724,34 @@ app.get('/api/test-push', adminAuth, async (req, res) => {
     { url: '/' }
   );
   res.json({ success: true, subscribers: pushSubscriptions.length });
+});
+
+// Debug — see upcoming fixtures
+app.get('/api/debug-fixtures', adminAuth, async (req, res) => {
+  if (!FOOTBALL_KEY) return res.json({error:'No FOOTBALL_KEY'});
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const sevenDays = new Date(Date.now()+7*86400000).toISOString().split('T')[0];
+    const allMatches = [];
+    for (const lg of LEAGUES) {
+      try {
+        const r = await fetch(`https://api.football-data.org/v4/competitions/${lg.code}/matches?dateFrom=${today}&dateTo=${sevenDays}`, {
+          headers: {'X-Auth-Token': FOOTBALL_KEY}
+        });
+        const d = await r.json();
+        (d.matches||[]).filter(m=>['SCHEDULED','TIMED'].includes(m.status)).forEach(m => allMatches.push({
+          league: lg.name,
+          home: m.homeTeam?.shortName||m.homeTeam?.name,
+          away: m.awayTeam?.shortName||m.awayTeam?.name,
+          date: m.utcDate?.split('T')[0],
+          time: m.utcDate?.substring(11,16),
+          status: m.status
+        }));
+        await new Promise(r=>setTimeout(r,400));
+      } catch(e) {}
+    }
+    res.json({today, count: allMatches.length, fixtures: allMatches});
+  } catch(e) { res.json({error: e.message}); }
 });
 
 app.get('/api/leagues', (req,res) => res.json(LEAGUES));
