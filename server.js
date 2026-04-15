@@ -290,75 +290,60 @@ async function askGemini(home, away, league, homeForm=null, awayForm=null) {
   if (!GEMINI_KEY) return null;
   try {
     const homeFormStr = homeForm
-      ? `REAL DATA — ${home} (playing at HOME):
-         Last 5 HOME results: ${homeForm.homeForm||homeForm.form} | Overall last 5: ${homeForm.formStr}
-         Home goals scored: ${homeForm.avgScored}/game | Home goals conceded: ${homeForm.avgConceded}/game
-         Home losses in last 5 home games: ${homeForm.losses}`
-      : `No real form data for ${home}`;
+      ? `${home} last 5 HOME games: ${homeForm.homeForm||homeForm.form||'unknown'} | Losses: ${homeForm.losses} | Avg scored: ${homeForm.avgScored} | Avg conceded: ${homeForm.avgConceded}`
+      : `${home} form: unknown`;
 
     const awayFormStr = awayForm
-      ? `REAL DATA — ${away} (playing AWAY):
-         Last 5 AWAY results: ${awayForm.awayForm||awayForm.form} | Overall last 5: ${awayForm.formStr}
-         Away goals scored: ${awayForm.avgScored}/game | Away goals conceded: ${awayForm.avgConceded}/game
-         Away losses in last 5 away games: ${awayForm.losses}`
-      : `No real form data for ${away}`;
+      ? `${away} last 5 AWAY games: ${awayForm.awayForm||awayForm.form||'unknown'} | Losses: ${awayForm.losses} | Avg scored: ${awayForm.avgScored} | Avg conceded: ${awayForm.avgConceded}`
+      : `${away} form: unknown`;
 
-    const prompt = `You are a strict European Handicap betting analyst. Analyze: ${home} vs ${away} (${league}).
+    const hfDefault = homeForm?.form || 'WWDLW';
+    const afDefault = awayForm?.form || 'LWLLL';
 
-REAL LIVE FORM DATA (use this — do NOT ignore):
+    const prompt = `You are a European Handicap betting analyst. Analyze: ${home} vs ${away} (${league}).
+
+REAL FORM DATA:
 ${homeFormStr}
 ${awayFormStr}
 
-HOW EUROPEAN HANDICAP WORKS:
-The FAVORITE gets a goal head start BEFORE the match starts.
-- H1 = Favorite starts +1 up. Bet wins if favorite does NOT lose.
-- H2 = Favorite starts +2 up. Bet wins unless favorite loses by 2+.
-- H3 = Favorite starts +3 up. Bet wins unless favorite loses by 3+.
+EUROPEAN HANDICAP:
+H1 = Favorite starts +1 up. Wins unless they LOSE.
+H2 = Favorite starts +2 up. Wins unless they lose by 2+.
+H3 = Favorite starts +3 up. Wins unless they lose by 3+.
 
-THE MOST IMPORTANT QUESTION TO ASK:
-"Even with this head start, can this team AVOID LOSING?"
-Focus on LOW LOSS RATE and CONSISTENCY — not big wins.
+KEY QUESTION: "Can this team AVOID LOSING even with a head start?"
 
-STRICT SKIP RULES — Skip immediately if ANY apply:
-❌ Favorite has lost 2 or more of their last 5 matches (CHECK REAL DATA ABOVE) — SKIP NO EXCEPTIONS
-❌ Favorite has been inconsistent — winning one, losing one pattern — SKIP
-❌ Match looks "too easy" but real form shows recent losses — this is a TRAP — SKIP
-❌ Opponent concedes less than 1 goal per game on average — SKIP
-❌ Low motivation match — team is mid-table, safe, nothing to play for — SKIP
-❌ Team is already relegated or already champions with nothing left to prove — SKIP
-❌ Key players (striker, goalkeeper, captain) known to be injured or suspended — SKIP
-❌ Odds below 1.35 — SKIP
-❌ Derby or high-emotion match where form goes out the window — be extra careful
+SKIP if:
+- Favorite lost 2+ of last 5 games
+- Very inconsistent form (W L W L W pattern)
+- No clear stronger team
+- Odds below 1.35
 
-ONLY PICK if ALL apply:
-✅ Favorite lost 0 or 1 of last 5 (verify with REAL DATA above)
-✅ Favorite is consistent and reliable
-✅ Opponent is weak or struggling
-✅ H2H history favors the favorite
-✅ Probability genuinely 70%+
-✅ No known key injuries or suspensions to the favorite's main players
-✅ Team has clear motivation — title race, relegation battle, European spot
+PICK if:
+- Favorite lost 0 or 1 of last 5
+- Clear quality difference between teams
+- Probability 70%+
 
-HANDICAP BASED ON ODDS:
-- Odds 1.80 to 2.50: Pick H2 or H3
-- Odds 1.40 to 1.79: Pick H1
-- Odds below 1.40: Pick H1 BANKER
+HANDICAP SELECTION:
+- Odds 1.80-2.50: H2 or H3
+- Odds 1.40-1.79: H1
+- Odds below 1.40: H1 BANKER (85%+ only)
 
-BANKER: 85%+ probability only. Never force bankers.
+Respond ONLY with valid JSON, no markdown:
+{"fav":"team name","h":"H1","prob":80,"banker":false,"odds":1.65,"hf":"${hfDefault}","af":"${afDefault}","h2h":"brief h2h","tips":["reason1","reason2","reason3"],"writeup":"2-3 sentences about why this pick is safe based on form and h2h"}
 
-Reply ONLY valid JSON:
-{"fav":"exact team name","h":"H2","prob":78,"banker":false,"odds":2.10,"hf":"${homeForm?.form||'WWDLW'}","af":"${awayForm?.form||'LWLLL'}","h2h":"H2H record","tips":["Real form reason","Opponent weakness","H2H insight"],"writeup":"H2H: [specific record]. Last 5 form: ${home} — ${homeForm?.formStr||'unknown'} (${homeForm?.losses||'?'} losses). ${away} — ${awayForm?.formStr||'unknown'} (${awayForm?.losses||'?'} losses). [Why the handicap makes this safe]."}
-
-If fails ANY rule: {"skip":true}`;
+If no clear pick exists: {"skip":true}`;
 
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.1,maxOutputTokens:500} })
+      body:JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.2,maxOutputTokens:400} })
     });
     const d = await r.json();
+    if (d.error) { console.log('[Gemini] API error:', d.error.message); return null; }
     const txt = d.candidates?.[0]?.content?.parts?.[0]?.text||'';
+    console.log('[Gemini] Raw response:', txt.substring(0,100));
     const s=txt.indexOf('{'), e=txt.lastIndexOf('}');
-    if(s<0||e<0) return null;
+    if(s<0||e<0) { console.log('[Gemini] No JSON found'); return null; }
     const j=JSON.parse(txt.slice(s,e+1));
     if(j.skip||!j.prob||j.prob<70) return null;
     if(j.odds&&j.odds<1.35) return null;
@@ -753,6 +738,12 @@ app.get('/api/debug-fixtures', adminAuth, async (req, res) => {
     }
     res.json({today, count: allMatches.length, fixtures: allMatches});
   } catch(e) { res.json({error: e.message}); }
+});
+
+// Test Gemini directly
+app.get('/api/test-gemini', adminAuth, async (req, res) => {
+  const result = await askGemini('Liverpool', 'Fulham', 'Premier League');
+  res.json({ result });
 });
 
 app.get('/api/leagues', (req,res) => res.json(LEAGUES));
