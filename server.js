@@ -334,7 +334,7 @@ Respond ONLY with valid JSON, no markdown:
 
 If no clear pick exists: {"skip":true}`;
 
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{temperature:0.2,maxOutputTokens:400} })
     });
@@ -744,7 +744,7 @@ app.get('/api/debug-fixtures', adminAuth, async (req, res) => {
 app.get('/api/test-gemini', adminAuth, async (req, res) => {
   if (!GEMINI_KEY) return res.json({error: 'No GEMINI_KEY set'});
   try {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         contents:[{parts:[{text:'Analyze Liverpool vs Fulham for European Handicap betting. Reply ONLY with JSON: {"fav":"Liverpool","h":"H1","prob":78,"banker":false,"odds":1.65,"hf":"WWWDW","af":"LLDLL","h2h":"LIV 5W last 6","tips":["Liverpool strong","Fulham away poor","H2H favor Liverpool"],"writeup":"Liverpool start 1 goal up. Won 5 of last 6 vs Fulham. Safe pick."}'}]}],
