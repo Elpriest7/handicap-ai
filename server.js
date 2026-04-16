@@ -740,10 +740,34 @@ app.get('/api/debug-fixtures', adminAuth, async (req, res) => {
   } catch(e) { res.json({error: e.message}); }
 });
 
-// Test Gemini directly
+// Test Gemini directly with full response
 app.get('/api/test-gemini', adminAuth, async (req, res) => {
-  const result = await askGemini('Liverpool', 'Fulham', 'Premier League');
-  res.json({ result });
+  if (!GEMINI_KEY) return res.json({error: 'No GEMINI_KEY set'});
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        contents:[{parts:[{text:'Analyze Liverpool vs Fulham for European Handicap betting. Reply ONLY with JSON: {"fav":"Liverpool","h":"H1","prob":78,"banker":false,"odds":1.65,"hf":"WWWDW","af":"LLDLL","h2h":"LIV 5W last 6","tips":["Liverpool strong","Fulham away poor","H2H favor Liverpool"],"writeup":"Liverpool start 1 goal up. Won 5 of last 6 vs Fulham. Safe pick."}'}]}],
+        generationConfig:{temperature:0.2, maxOutputTokens:300}
+      })
+    });
+    const d = await r.json();
+    const txt = d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const s = txt.indexOf('{'), e = txt.lastIndexOf('}');
+    let parsed = null;
+    if (s>=0 && e>=0) {
+      try { parsed = JSON.parse(txt.slice(s,e+1)); } catch(pe) {}
+    }
+    res.json({
+      api_key_set: !!GEMINI_KEY,
+      raw_response: txt.substring(0,300),
+      parsed,
+      error: d.error || null,
+      candidates_count: d.candidates?.length || 0
+    });
+  } catch(e) {
+    res.json({error: e.message});
+  }
 });
 
 app.get('/api/leagues', (req,res) => res.json(LEAGUES));
